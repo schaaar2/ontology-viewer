@@ -1,20 +1,23 @@
 /* global cytoscape, N3 */
 (() => {
+  // -------- namespaces --------
   const RDF  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
   const RDFS = "http://www.w3.org/2000/01/rdf-schema#";
   const OWL  = "http://www.w3.org/2002/07/owl#";
   const XSD  = "http://www.w3.org/2001/XMLSchema#";
 
+  // -------- state --------
   const ui = {};
   let cy = null;
 
-  let currentOntology = null;
+  let currentOntology = null; // {title, file}
   let currentStats = null;
-
   let graphIndex = emptyGraphIndex();
+
   let saveScheduled = false;
 
   document.addEventListener("DOMContentLoaded", () => {
+    // Keep existing working IDs/structure from the original app
     ui.ontologySelect = document.getElementById("ontologySelect");
     ui.searchBox = document.getElementById("searchBox");
     ui.searchButton = document.getElementById("searchButton");
@@ -30,36 +33,42 @@
     ui.detailsContent = document.getElementById("detailsContent");
     ui.statusText = document.getElementById("statusText");
 
+    // Add new UI features without breaking existing HTML
     createDynamicUi();
     initCy();
     wireUi();
+
+    // IMPORTANT: preserve the original dropdown loading logic
     loadCatalog();
   });
 
+  // -------- graph index for context menu navigation --------
   function emptyGraphIndex(){
     return {
-      parentsByClass: new Map(),
-      childrenByClass: new Map(),
-      objectOutByClass: new Map(),
-      objectInByClass: new Map(),
-      dataPropsByClass: new Map(),
-      individualsByClass: new Map(),
-      individualClassEdgeByPair: new Map()
+      parentsByClass: new Map(),     // classIri -> [{classIri, classLabel, edgeId}]
+      childrenByClass: new Map(),    // classIri -> [{classIri, classLabel, edgeId}]
+      objectOutByClass: new Map(),   // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
+      objectInByClass: new Map(),    // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
+      dataPropsByClass: new Map(),   // classIri -> [{propIri, label, nodeId, range, edgeId}]
+      individualsByClass: new Map()  // classIri -> [{individualIri, label, nodeId, edgeId}]
     };
   }
 
+  // -------- dynamic UI (class filter + context menu container) --------
   function createDynamicUi(){
     createClassFilterControl();
     createContextMenu();
   }
 
   function createClassFilterControl(){
+    // If user already added it to HTML, just wire it
     if (document.getElementById("classFilterBox")) {
       ui.classFilterBox = document.getElementById("classFilterBox");
       ui.clearClassFilterButton = document.getElementById("clearClassFilterButton");
       return;
     }
 
+    // Otherwise inject into existing toolbar (.controls)
     const controls = document.querySelector(".controls");
     if (!controls) return;
 
@@ -68,11 +77,12 @@
     wrapper.innerHTML = `
       <span>Filter visible classes</span>
       <div class="row">
-        <input id="classFilterBox" type="text" placeholder="Filter classes by label, IRI, or comment">
+        <input id="classFilterBox" type="text" placeholder="Filter by label, IRI, or comment">
         <button id="clearClassFilterButton" type="button">Clear</button>
       </div>
     `;
 
+    // Insert after search control if possible
     const searchControl = ui.searchBox ? ui.searchBox.closest(".control") : null;
     if (searchControl && searchControl.parentElement === controls) {
       searchControl.insertAdjacentElement("afterend", wrapper);
@@ -95,16 +105,16 @@
     menu.style.position = "fixed";
     menu.style.zIndex = "9999";
     menu.style.display = "none";
-    menu.style.minWidth = "260px";
-    menu.style.maxWidth = "360px";
+    menu.style.minWidth = "280px";
+    menu.style.maxWidth = "420px";
     menu.style.maxHeight = "70vh";
     menu.style.overflowY = "auto";
     menu.style.padding = "0.5rem";
     menu.style.background = "#ffffff";
     menu.style.color = "#222222";
     menu.style.border = "1px solid #e2e5ea";
-    menu.style.borderRadius = "6px";
-    menu.style.boxShadow = "0 8px 24px rgba(0,0,0,0.18)";
+    menu.style.borderRadius = "8px";
+    menu.style.boxShadow = "0 10px 28px rgba(0,0,0,0.18)";
     menu.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
     menu.style.fontSize = "0.88rem";
 
@@ -112,13 +122,23 @@
     ui.contextMenu = menu;
 
     document.addEventListener("click", (evt) => {
-      if (!ui.contextMenu.contains(evt.target)) hideContextMenu();
+      if (ui.contextMenu && ui.contextMenu.style.display !== "none" && !ui.contextMenu.contains(evt.target)) {
+        hideContextMenu();
+      }
+    });
+
+    // If the user right-clicks inside the menu itself, don't open browser menu
+    document.addEventListener("contextmenu", (evt) => {
+      if (ui.contextMenu && ui.contextMenu.contains(evt.target)) {
+        evt.preventDefault();
+      }
     });
 
     window.addEventListener("resize", hideContextMenu);
     window.addEventListener("scroll", hideContextMenu, true);
   }
 
+  // -------- cytoscape init --------
   function initCy(){
     cy = cytoscape({
       container: document.getElementById("cy"),
@@ -133,18 +153,12 @@
             "text-max-width": 110,
             "text-valign": "center",
             "text-halign": "center",
-            "color": "#222222",
+            "color": "#e7ecff",
             "background-color": "data(color)",
             "border-width": 1,
-            "border-color": "rgba(31,59,87,.35)",
+            "border-color": "rgba(255,255,255,.25)",
             "width": "mapData(size, 12, 28, 28, 52)",
             "height": "mapData(size, 12, 28, 28, 52)"
-          }
-        },
-        {
-          selector: "node[type='class']",
-          style: {
-            "shape": "ellipse"
           }
         },
         {
@@ -158,8 +172,8 @@
           selector: "node[type='individual']",
           style: {
             "shape": "round-rectangle",
-            "text-max-width": 130,
-            "background-color": "rgba(204,178,255,.7)"
+            "background-color": "rgba(204,178,255,.7)",
+            "text-max-width": 140
           }
         },
         {
@@ -174,65 +188,48 @@
             "label": "data(label)",
             "font-size": 9,
             "text-rotation": "autorotate",
-            "color": "#294e73",
+            "color": "rgba(231,236,255,.85)",
             "text-background-opacity": 1,
-            "text-background-color": "rgba(255,255,255,.85)",
-            "text-background-padding": "2px"
+            "text-background-color": "rgba(0,0,0,.35)",
+            "text-background-padding": "2px",
           }
         },
-        {
-          selector: ".hidden",
-          style: {
-            "display": "none"
-          }
-        },
-        {
-          selector: ".filterHidden",
-          style: {
-            "display": "none"
-          }
-        },
-        {
-          selector: ".searchHit",
-          style: {
-            "border-width": 3,
-            "border-color": "#1a5fb4"
-          }
-        },
-        {
-          selector: ".selected",
-          style: {
-            "border-width": 4,
-            "border-color": "#1f3b57"
-          }
-        }
+        { selector: ".hidden", style: { "display": "none" } },
+        { selector: ".filterHidden", style: { "display": "none" } },
+        { selector: ".searchHit", style: { "border-width": 3, "border-color": "#67b7ff" } },
+        { selector: ".selected", style: { "border-width": 4, "border-color": "#ffffff" } },
       ],
       wheelSensitivity: 0.2
     });
 
+    // Details on click
     cy.on("tap", "node, edge", (evt) => {
       cy.elements().removeClass("selected");
       evt.target.addClass("selected");
       showDetails(evt.target);
     });
 
-    cy.on("tap", "node[type='class']", (evt) => {
-      showClassContextMenu(evt.target, evt.originalEvent);
-    });
-
+    // Right click / context tap on class node opens menu
     cy.on("cxttap", "node[type='class']", (evt) => {
+      if (evt.originalEvent) {
+        if (evt.originalEvent.preventDefault) evt.originalEvent.preventDefault();
+        if (evt.originalEvent.stopPropagation) evt.originalEvent.stopPropagation();
+      }
       showClassContextMenu(evt.target, evt.originalEvent);
     });
 
+    // Tap background hides menu
     cy.on("tap", (evt) => {
       if (evt.target === cy) hideContextMenu();
     });
 
+    // Save positions after drag
     cy.on("dragfree", "node", () => {
       scheduleSavePositions();
     });
   }
 
+  // -------- UI wiring --------
   function wireUi(){
     ui.ontologySelect.addEventListener("change", async () => {
       const idx = parseInt(ui.ontologySelect.value, 10);
@@ -242,16 +239,12 @@
     });
 
     ui.searchButton.addEventListener("click", () => performSearch());
-
     ui.searchBox.addEventListener("keydown", (e) => {
       if (e.key === "Enter") performSearch();
     });
 
     if (ui.classFilterBox) {
-      ui.classFilterBox.addEventListener("input", () => {
-        applyVisibility();
-      });
-
+      ui.classFilterBox.addEventListener("input", () => applyVisibility());
       ui.classFilterBox.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
           ui.classFilterBox.value = "";
@@ -264,12 +257,12 @@
       ui.clearClassFilterButton.addEventListener("click", () => {
         ui.classFilterBox.value = "";
         applyVisibility();
-        cy.fit(cy.elements(":visible"), 30);
+        cy.fit(undefined, 30);
       });
     }
 
     ui.applyLayoutButton.addEventListener("click", () => runLayout(ui.layoutSelect.value, true));
-    ui.fitButton.addEventListener("click", () => cy.fit(cy.elements(":visible"), 30));
+    ui.fitButton.addEventListener("click", () => cy.fit(cy.elements().not(".hidden").not(".filterHidden"), 30));
 
     ui.resetPositionsButton.addEventListener("click", () => {
       if (!currentOntology) return;
@@ -279,7 +272,6 @@
     });
 
     const onToggle = () => applyVisibility();
-
     ui.showSubclass.addEventListener("change", onToggle);
     ui.showObjectProperties.addEventListener("change", onToggle);
     ui.showDataProperties.addEventListener("change", onToggle);
@@ -289,13 +281,12 @@
     });
   }
 
+  // -------- IMPORTANT: preserve original catalog.json dropdown logic --------
   async function loadCatalog(){
     try{
       updateStatus("Loading catalog.json…");
-
       const res = await fetch("catalog.json", { cache: "no-store" });
       if (!res.ok) throw new Error(`Failed to load catalog.json (${res.status})`);
-
       const items = await res.json();
 
       ui.ontologySelect.innerHTML = "";
@@ -324,34 +315,926 @@
 
   async function loadOntology(item){
     currentOntology = item;
+    currentStats = null;
     graphIndex = emptyGraphIndex();
+    hideContextMenu();
+
+    if (ui.classFilterBox) ui.classFilterBox.value = "";
 
     try{
       updateStatus(`Loading ${item.title || item.file}…`);
       ui.detailsContent.innerHTML = `<div class="muted">Loading ontology…</div>`;
-      hideContextMenu();
-
-      if (ui.classFilterBox) ui.classFilterBox.value = "";
 
       const ttl = await fetchText(item.file);
       const graph = buildGraphFromTurtle(ttl);
-
-      graphIndex = graph.index;
+      graphIndex = graph.index || emptyGraphIndex();
 
       cy.elements().remove();
       cy.add(graph.elements);
 
       const restored = restorePositions(item.file);
-
       applyVisibility();
 
       if (!restored) runLayout(ui.layoutSelect.value, true);
-      else cy.fit(cy.elements(":visible"), 40);
+      else cy.fit(cy.elements().not(".hidden").not(".filterHidden"), 40);
 
       currentStats = graph.stats;
       updateStatus(statusLine(graph.stats));
-      ui.detailsContent.innerHTML = `<div class="muted">Loaded <b>${escapeHtml(item.title || item.file)}</b>. Click a class to open the navigation menu.</div>`;
+      ui.detailsContent.innerHTML =
+        `<div class="muted">Loaded <b>${escapeHtml(item.title || item.file)}</b>.
+        Right-click (or long-press) a class node for navigation.</div>`;
     } catch(err){
       console.error(err);
       updateStatus("Error loading ontology. See console.");
       ui.detailsContent.innerHTML = `<div class="muted">Failed to load or parse ontology.</div>
+        <pre>${escapeHtml(String(err))}</pre>`;
+    }
+  }
+
+  async function fetchText(path){
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Fetch failed: ${path} (${res.status})`);
+    return await res.text();
+  }
+
+  // -------- parsing/building --------
+  function buildGraphFromTurtle(ttlText){
+    const parser = new N3.Parser({ format: "text/turtle" });
+    const store = new N3.Store();
+    const quads = parser.parse(ttlText);
+    store.addQuads(quads);
+
+    const rdfType = named(RDF + "type");
+    const rdfsClass = named(RDFS + "Class");
+    const owlClass = named(OWL + "Class");
+    const rdfsLabel = named(RDFS + "label");
+    const rdfsComment = named(RDFS + "comment");
+    const subClassOf = named(RDFS + "subClassOf");
+    const owlObjectProperty = named(OWL + "ObjectProperty");
+    const owlDatatypeProperty = named(OWL + "DatatypeProperty");
+    const rdfsDomain = named(RDFS + "domain");
+    const rdfsRange = named(RDFS + "range");
+
+    const labels = new Map();
+    const comments = new Map();
+
+    const classes = new Set();
+    const objectProps = new Set();
+    const dataProps = new Set();
+
+    // allow multiple domain/range
+    const domains = new Map(); // prop -> [term]
+    const ranges  = new Map(); // prop -> [term]
+
+    const index = emptyGraphIndex();
+
+    // First pass: labels/comments/types and domain/range
+    for (const q of quads){
+      const s = q.subject, p = q.predicate, o = q.object;
+
+      if (p.termType === "NamedNode" && p.value === rdfsLabel.value && o.termType === "Literal"){
+        labels.set(s.value, o.value);
+      }
+      if (p.termType === "NamedNode" && p.value === rdfsComment.value && o.termType === "Literal"){
+        comments.set(s.value, o.value);
+      }
+
+      if (p.termType === "NamedNode" && p.value === rdfType.value && o.termType === "NamedNode"){
+        if (o.value === owlClass.value || o.value === rdfsClass.value) classes.add(s.value);
+        if (o.value === owlObjectProperty.value) objectProps.add(s.value);
+        if (o.value === owlDatatypeProperty.value) dataProps.add(s.value);
+      }
+
+      if (p.termType === "NamedNode" && p.value === rdfsDomain.value && o.termType === "NamedNode"){
+        addToMapArray(domains, s.value, o);
+      }
+      if (p.termType === "NamedNode" && p.value === rdfsRange.value){
+        addToMapArray(ranges, s.value, o);
+      }
+    }
+
+    // Ensure classes that appear in subclass axioms are included
+    for (const q of quads){
+      if (q.predicate.termType === "NamedNode" && q.predicate.value === subClassOf.value){
+        if (q.subject.termType === "NamedNode") classes.add(q.subject.value);
+        if (q.object.termType === "NamedNode") classes.add(q.object.value);
+      }
+    }
+
+    // Individuals: any NamedNode with rdf:type some class in our class set
+    // Exclude things already known as class/property resources.
+    const individualsByClass = new Map();
+    for (const q of quads){
+      if (q.predicate.termType !== "NamedNode" || q.predicate.value !== rdfType.value) continue;
+      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+
+      const individualIri = q.subject.value;
+      const classIri = q.object.value;
+
+      if (!classes.has(classIri)) continue;
+      if (classes.has(individualIri)) continue;
+      if (objectProps.has(individualIri)) continue;
+      if (dataProps.has(individualIri)) continue;
+
+      addToMapArray(individualsByClass, classIri, individualIri);
+    }
+
+    const elements = [];
+    const nodeIds = new Set();
+
+    // class nodes
+    for (const iri of classes){
+      const id = iriToId(iri);
+      nodeIds.add(id);
+      elements.push({
+        data: {
+          id,
+          iri,
+          type: "class",
+          label: labels.get(iri) || compactIri(iri),
+          comment: comments.get(iri) || "",
+          color: "rgba(132,210,255,.55)",
+          size: 22
+        }
+      });
+    }
+
+    // object property edges (domain -> range) only when named and both are classes
+    let objEdgeCount = 0;
+    for (const propIri of objectProps){
+      const domainTerms = domains.get(propIri) || [];
+      const rangeTerms = ranges.get(propIri) || [];
+      const propLabel = labels.get(propIri) || compactIri(propIri);
+
+      for (const d of domainTerms){
+        for (const r of rangeTerms){
+          if (!d || !r) continue;
+          if (d.termType !== "NamedNode" || r.termType !== "NamedNode") continue;
+
+          const dIri = d.value;
+          const rIri = r.value;
+          if (!classes.has(dIri) || !classes.has(rIri)) continue;
+
+          const eid = `obj:${iriToId(propIri)}:${iriToId(dIri)}->${iriToId(rIri)}`;
+          elements.push({
+            data: {
+              id: eid,
+              source: iriToId(dIri),
+              target: iriToId(rIri),
+              iri: propIri,
+              type: "objpropEdge",
+              label: propLabel,
+              comment: comments.get(propIri) || "",
+              color: "rgba(255,212,121,.8)"
+            },
+            classes: "rel-objprop"
+          });
+
+          addToMapArray(index.objectOutByClass, dIri, {
+            propIri,
+            label: propLabel,
+            classIri: rIri,
+            classLabel: labels.get(rIri) || compactIri(rIri),
+            edgeId: eid
+          });
+          addToMapArray(index.objectInByClass, rIri, {
+            propIri,
+            label: propLabel,
+            classIri: dIri,
+            classLabel: labels.get(dIri) || compactIri(dIri),
+            edgeId: eid
+          });
+
+          objEdgeCount++;
+        }
+      }
+    }
+
+    // data properties: nodes + edges from domain class -> prop node
+    let dataNodeCount = 0;
+    let dataEdgeCount = 0;
+
+    for (const propIri of dataProps){
+      const domainTerms = domains.get(propIri) || [];
+      const rangeTerms = ranges.get(propIri) || [];
+      const rangeStr = rangeTerms.length ? rangeTerms.map(termToReadable).join(", ") : "";
+
+      const baseLabel = labels.get(propIri) || compactIri(propIri);
+      const label = rangeStr ? `${baseLabel}\n: ${rangeStr}` : baseLabel;
+
+      for (const d of domainTerms){
+        if (!d || d.termType !== "NamedNode") continue;
+
+        const dIri = d.value;
+        if (!classes.has(dIri)) continue;
+
+        const propNodeId = `dp:${iriToId(propIri)}`;
+
+        if (!nodeIds.has(propNodeId)){
+          nodeIds.add(propNodeId);
+          elements.push({
+            data: {
+              id: propNodeId,
+              iri: propIri,
+              type: "dataprop",
+              label: label.length > 48 ? baseLabel : label,
+              labelFull: label,
+              range: rangeStr,
+              comment: comments.get(propIri) || "",
+              color: "rgba(184,255,177,.55)",
+              size: 16
+            }
+          });
+          dataNodeCount++;
+        }
+
+        const eid = `dpedge:${iriToId(dIri)}->${propNodeId}`;
+        elements.push({
+          data: {
+            id: eid,
+            source: iriToId(dIri),
+            target: propNodeId,
+            iri: propIri,
+            type: "datapropEdge",
+            label: "",
+            comment: "",
+            color: "rgba(184,255,177,.75)"
+          },
+          classes: "rel-dataprop"
+        });
+
+        addToMapArray(index.dataPropsByClass, dIri, {
+          propIri,
+          label: baseLabel,
+          nodeId: propNodeId,
+          range: rangeStr,
+          edgeId: eid
+        });
+
+        dataEdgeCount++;
+      }
+    }
+
+    // subclass edges (direct asserted)
+    let subclassCount = 0;
+    for (const q of quads){
+      if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
+      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+
+      const child = q.subject.value;
+      const parent = q.object.value;
+      if (!classes.has(child) || !classes.has(parent)) continue;
+
+      const eid = `sc:${iriToId(child)}->${iriToId(parent)}`;
+      elements.push({
+        data: {
+          id: eid,
+          source: iriToId(child),
+          target: iriToId(parent),
+          iri: subClassOf.value,
+          type: "subclass",
+          label: "",
+          comment: "",
+          color: "rgba(138,162,255,.7)"
+        },
+        classes: "rel-subclass"
+      });
+
+      addToMapArray(index.parentsByClass, child, {
+        classIri: parent,
+        classLabel: labels.get(parent) || compactIri(parent),
+        edgeId: eid
+      });
+      addToMapArray(index.childrenByClass, parent, {
+        classIri: child,
+        classLabel: labels.get(child) || compactIri(child),
+        edgeId: eid
+      });
+
+      subclassCount++;
+    }
+
+    // individuals as context-only nodes/edges (only shown when navigated via context menu)
+    let individualNodeCount = 0;
+    let individualEdgeCount = 0;
+
+    for (const [classIri, individualIris] of individualsByClass.entries()){
+      for (const individualIri of individualIris){
+        const nodeId = `ind:${iriToId(individualIri)}`;
+        const edgeId = `inst:${iriToId(classIri)}->${nodeId}`;
+
+        if (!nodeIds.has(nodeId)){
+          nodeIds.add(nodeId);
+          elements.push({
+            data: {
+              id: nodeId,
+              iri: individualIri,
+              type: "individual",
+              label: labels.get(individualIri) || compactIri(individualIri),
+              comment: comments.get(individualIri) || "",
+              color: "rgba(204,178,255,.7)",
+              size: 16
+            },
+            classes: "contextOnly"
+          });
+          individualNodeCount++;
+        }
+
+        elements.push({
+          data: {
+            id: edgeId,
+            source: iriToId(classIri),
+            target: nodeId,
+            iri: rdfType.value,
+            type: "individualType",
+            label: "type",
+            comment: "",
+            color: "rgba(164,130,230,.75)"
+          },
+          classes: "rel-individual contextOnly"
+        });
+
+        addToMapArray(index.individualsByClass, classIri, {
+          individualIri,
+          label: labels.get(individualIri) || compactIri(individualIri),
+          nodeId,
+          edgeId
+        });
+
+        individualEdgeCount++;
+      }
+    }
+
+    // size heuristic for class nodes
+    const degreeMap = new Map();
+    for (const el of elements){
+      if (el.data && el.data.source && el.data.target){
+        degreeMap.set(el.data.source, (degreeMap.get(el.data.source)||0) + 1);
+        degreeMap.set(el.data.target, (degreeMap.get(el.data.target)||0) + 1);
+      }
+    }
+    for (const el of elements){
+      if (el.data?.type === "class"){
+        const deg = degreeMap.get(el.data.id) || 0;
+        el.data.size = Math.max(18, Math.min(28, 18 + deg));
+      }
+    }
+
+    return {
+      elements,
+      index,
+      stats: {
+        classes: classes.size,
+        objectProperties: objectProps.size,
+        dataProperties: dataProps.size,
+        subclassEdges: subclassCount,
+        objectPropEdges: objEdgeCount,
+        dataPropNodes: dataNodeCount,
+        dataPropEdges: dataEdgeCount,
+        individuals: individualNodeCount,
+        individualEdges: individualEdgeCount
+      }
+    };
+  }
+
+  // -------- visibility: toggles + filtering --------
+  function applyVisibility(){
+    if (!cy) return;
+
+    // reset
+    cy.elements().removeClass("hidden filterHidden");
+
+    // Context-only (individuals) start hidden unless explicitly revealed
+    cy.elements(".contextOnly").addClass("hidden");
+
+    // toggles
+    cy.edges(".rel-subclass").toggleClass("hidden", !ui.showSubclass.checked);
+    cy.edges(".rel-objprop").toggleClass("hidden", !ui.showObjectProperties.checked);
+
+    cy.nodes("[type='dataprop']").toggleClass("hidden", !ui.showDataProperties.checked);
+    cy.edges(".rel-dataprop").toggleClass("hidden", !ui.showDataProperties.checked);
+
+    // class filter applies on top
+    applyClassFilter();
+
+    updateStatus(statusLine(currentStats));
+  }
+
+  function applyClassFilter(){
+    if (!cy || !ui.classFilterBox) return;
+
+    const q = (ui.classFilterBox.value || "").trim().toLowerCase();
+    if (!q) return;
+
+    const hiddenClassIds = new Set();
+
+    // hide non-matching class nodes
+    cy.nodes("[type='class']").forEach((node) => {
+      const d = node.data();
+      const haystack = [d.label, d.labelFull, d.iri, d.comment]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      if (!haystack.includes(q)) {
+        node.addClass("filterHidden");
+        hiddenClassIds.add(node.id());
+      }
+    });
+
+    // hide edges attached to hidden nodes
+    cy.edges().forEach((edge) => {
+      if (
+        hiddenClassIds.has(edge.source().id()) ||
+        hiddenClassIds.has(edge.target().id()) ||
+        edge.source().hasClass("filterHidden") ||
+        edge.target().hasClass("filterHidden")
+      ) {
+        edge.addClass("filterHidden");
+      }
+    });
+
+    // hide dataprop nodes not connected to a visible class (via visible dp edges)
+    cy.nodes("[type='dataprop']").forEach((node) => {
+      const connectedVisible = node.connectedEdges(".rel-dataprop").filter((edge) => {
+        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden");
+      });
+      if (!connectedVisible.length) node.addClass("filterHidden");
+    });
+
+    // hide individual nodes not connected to a visible class (when revealed)
+    cy.nodes("[type='individual']").forEach((node) => {
+      const connectedVisible = node.connectedEdges(".rel-individual").filter((edge) => {
+        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden");
+      });
+      if (!connectedVisible.length) node.addClass("filterHidden");
+    });
+  }
+
+  // -------- layouts --------
+  function runLayout(name, animate){
+    if (!cy) return;
+    const visibleElements = cy.elements().not(".hidden").not(".filterHidden");
+
+    const opts = {
+      name,
+      animate: !!animate,
+      animationDuration: 500,
+      fit: true,
+      padding: 40,
+      eles: visibleElements
+    };
+
+    if (name === "breadthfirst"){
+      opts.directed = true;
+      opts.spacingFactor = 1.2;
+      opts.circle = false;
+    }
+    if (name === "cose"){
+      opts.randomize = true;
+      opts.nodeRepulsion = 9000;
+      opts.idealEdgeLength = 90;
+    }
+    cy.layout(opts).run();
+  }
+
+  // -------- class context menu --------
+  function showClassContextMenu(node, originalEvent){
+    if (!node || node.data("type") !== "class") return;
+
+    if (originalEvent) {
+      if (originalEvent.preventDefault) originalEvent.preventDefault();
+      if (originalEvent.stopPropagation) originalEvent.stopPropagation();
+    }
+
+    const iri = node.data("iri");
+    const label = node.data("label") || compactIri(iri);
+
+    hideContextMenu();
+
+    const menu = ui.contextMenu;
+    if (!menu) return;
+
+    menu.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.style.fontWeight = "700";
+    title.style.color = "#1f3b57";
+    title.style.padding = "0.35rem 0.4rem";
+    title.style.borderBottom = "1px solid #eef0f3";
+    title.style.marginBottom = "0.35rem";
+    title.textContent = label;
+    menu.appendChild(title);
+
+    appendClassMenuGroup(
+      menu,
+      "Children",
+      graphIndex.childrenByClass.get(iri) || [],
+      (item) => navigateToNode(iriToId(item.classIri), item.edgeId),
+      (item) => item.classLabel
+    );
+
+    appendClassMenuGroup(
+      menu,
+      "Parents",
+      graphIndex.parentsByClass.get(iri) || [],
+      (item) => navigateToNode(iriToId(item.classIri), item.edgeId),
+      (item) => item.classLabel
+    );
+
+    appendClassMenuGroup(
+      menu,
+      "Data properties",
+      graphIndex.dataPropsByClass.get(iri) || [],
+      (item) => {
+        if (ui.showDataProperties && !ui.showDataProperties.checked) {
+          ui.showDataProperties.checked = true;
+          applyVisibility();
+        }
+        navigateToNode(item.nodeId, item.edgeId);
+      },
+      (item) => item.range ? `${item.label} : ${item.range}` : item.label
+    );
+
+    // Object properties: show outgoing and incoming in one list
+    const objectItems = [
+      ...(graphIndex.objectOutByClass.get(iri) || []).map((item) => ({
+        ...item,
+        menuLabel: `${item.label} → ${item.classLabel}`
+      })),
+      ...(graphIndex.objectInByClass.get(iri) || []).map((item) => ({
+        ...item,
+        menuLabel: `${item.classLabel} → ${item.label}`
+      }))
+    ];
+
+    appendClassMenuGroup(
+      menu,
+      "Object properties",
+      objectItems,
+      (item) => {
+        if (ui.showObjectProperties && !ui.showObjectProperties.checked) {
+          ui.showObjectProperties.checked = true;
+          applyVisibility();
+        }
+        navigateToNode(iriToId(item.classIri), item.edgeId);
+      },
+      (item) => item.menuLabel
+    );
+
+    appendClassMenuGroup(
+      menu,
+      "Individuals",
+      graphIndex.individualsByClass.get(iri) || [],
+      (item) => {
+        revealContextElement(item.nodeId, item.edgeId);
+        navigateToNode(item.nodeId, item.edgeId);
+      },
+      (item) => item.label
+    );
+
+    const pos = contextMenuPosition(node, originalEvent);
+    menu.style.left = `${pos.x}px`;
+    menu.style.top = `${pos.y}px`;
+    menu.style.display = "block";
+    keepMenuInViewport(menu);
+  }
+
+  function appendClassMenuGroup(menu, titleText, items, onClick, getLabel){
+    const group = document.createElement("div");
+    group.style.marginTop = "0.45rem";
+
+    const title = document.createElement("div");
+    title.style.fontWeight = "700";
+    title.style.color = "#294e73";
+    title.style.fontSize = "0.8rem";
+    title.style.padding = "0.25rem 0.4rem";
+    title.textContent = `${titleText} (${items.length})`;
+    group.appendChild(title);
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.style.color = "#777";
+      empty.style.fontStyle = "italic";
+      empty.style.fontSize = "0.8rem";
+      empty.style.padding = "0.2rem 0.4rem";
+      empty.textContent = "None";
+      group.appendChild(empty);
+      menu.appendChild(group);
+      return;
+    }
+
+    for (const item of items){
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = getLabel(item);
+      button.style.display = "block";
+      button.style.width = "100%";
+      button.style.textAlign = "left";
+      button.style.padding = "0.35rem 0.45rem";
+      button.style.margin = "0";
+      button.style.border = "none";
+      button.style.borderBottom = "1px solid #eef0f3";
+      button.style.background = "transparent";
+      button.style.color = "#1f3b57";
+      button.style.cursor = "pointer";
+
+      button.addEventListener("mouseenter", () => { button.style.background = "#eef4fb"; });
+      button.addEventListener("mouseleave", () => { button.style.background = "transparent"; });
+
+      button.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        hideContextMenu();
+        onClick(item);
+      });
+
+      group.appendChild(button);
+    }
+
+    menu.appendChild(group);
+  }
+
+  function contextMenuPosition(node, originalEvent){
+    if (
+      originalEvent &&
+      typeof originalEvent.clientX === "number" &&
+      typeof originalEvent.clientY === "number"
+    ) {
+      return { x: originalEvent.clientX + 8, y: originalEvent.clientY + 8 };
+    }
+
+    const rect = cy.container().getBoundingClientRect();
+    const rendered = node.renderedPosition();
+    return { x: rect.left + rendered.x + 8, y: rect.top + rendered.y + 8 };
+  }
+
+  function keepMenuInViewport(menu){
+    const rect = menu.getBoundingClientRect();
+    const margin = 10;
+
+    let left = rect.left;
+    let top = rect.top;
+
+    if (rect.right > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (rect.bottom > window.innerHeight - margin) {
+      top = window.innerHeight - rect.height - margin;
+    }
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  function hideContextMenu(){
+    if (ui.contextMenu) ui.contextMenu.style.display = "none";
+  }
+
+  function revealContextElement(nodeId, edgeId){
+    const node = cy.getElementById(nodeId);
+    const edge = cy.getElementById(edgeId);
+
+    if (node && node.length) node.removeClass("contextOnly hidden filterHidden");
+    if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden");
+  }
+
+  function navigateToNode(nodeId, edgeId){
+    const node = cy.getElementById(nodeId);
+    if (!node || !node.length) {
+      updateStatus("Target is not available in the graph.");
+      return;
+    }
+
+    // Clear filter if it hides the node
+    if (node.hasClass("filterHidden") && ui.classFilterBox) {
+      ui.classFilterBox.value = "";
+      applyVisibility();
+    }
+
+    // Ensure toggles allow visibility
+    if (node.data("type") === "dataprop" && ui.showDataProperties && !ui.showDataProperties.checked) {
+      ui.showDataProperties.checked = true;
+      applyVisibility();
+    }
+
+    if (edgeId) {
+      const edge = cy.getElementById(edgeId);
+      if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden");
+    }
+
+    node.removeClass("contextOnly hidden filterHidden");
+
+    cy.elements().removeClass("selected");
+    node.addClass("selected");
+    showDetails(node);
+
+    cy.animate({
+      center: { eles: node },
+      zoom: Math.max(0.75, Math.min(1.3, cy.zoom()))
+    }, { duration: 350 });
+  }
+
+  // -------- details panel --------
+  function showDetails(ele){
+    if (!ele) return;
+
+    if (ele.isNode && ele.isNode()){
+      const d = ele.data();
+      const typeLabel =
+        d.type === "class" ? "Class" :
+        d.type === "dataprop" ? "Data property" :
+        d.type === "individual" ? "Individual" :
+        "Node";
+
+      const label = escapeHtml(d.labelFull || d.label || "");
+      const iri = escapeHtml(d.iri || "");
+      const comment = escapeHtml(d.comment || "");
+      const range = escapeHtml(d.range || "");
+
+      ui.detailsContent.innerHTML = `
+        <div><span class="k">Type:</span> ${typeLabel}</div>
+        <div><span class="k">Label:</span> ${label}</div>
+        <div><span class="k">IRI:</span> <span class="iri">${iri}</span></div>
+        ${range ? `<div><span class="k">Range:</span> ${range}</div>` : ""}
+        ${comment ? `<div class="k" style="margin-top:8px">Comment</div><pre>${comment}</pre>` : `<div class="muted" style="margin-top:8px">No rdfs:comment</div>`}
+      `;
+      return;
+    }
+
+    if (ele.isEdge && ele.isEdge()){
+      const d = ele.data();
+      const label = escapeHtml(d.label || "");
+      const iri = escapeHtml(d.iri || "");
+      const comment = escapeHtml(d.comment || "");
+      const source = escapeHtml(ele.source().data("label") || ele.source().id());
+      const target = escapeHtml(ele.target().data("label") || ele.target().id());
+
+      const typeLabel =
+        d.type === "subclass" ? "rdfs:subClassOf" :
+        d.type === "objpropEdge" ? "Object property" :
+        d.type === "datapropEdge" ? "Data property domain link" :
+        d.type === "individualType" ? "rdf:type (individual)" :
+        "Edge";
+
+      ui.detailsContent.innerHTML = `
+        <div><span class="k">Type:</span> ${typeLabel}</div>
+        ${label ? `<div><span class="k">Label:</span> ${label}</div>` : ""}
+        <div><span class="k">From:</span> ${source}</div>
+        <div><span class="k">To:</span> ${target}</div>
+        <div><span class="k">IRI:</span> <span class="iri">${iri}</span></div>
+        ${comment ? `<div class="k" style="margin-top:8px">Comment</div><pre>${comment}</pre>` : `<div class="muted" style="margin-top:8px">No rdfs:comment</div>`}
+      `;
+    }
+  }
+
+  // -------- search --------
+  function performSearch(){
+    const q = (ui.searchBox.value || "").trim().toLowerCase();
+    cy.elements().removeClass("searchHit");
+
+    if (!q){
+      updateStatus(statusLine(currentStats));
+      return;
+    }
+
+    const hits = cy.nodes().filter(n => {
+      const d = n.data();
+      const label = (d.labelFull || d.label || "").toLowerCase();
+      const iri = (d.iri || "").toLowerCase();
+      const comment = (d.comment || "").toLowerCase();
+      return label.includes(q) || iri.includes(q) || comment.includes(q);
+    });
+
+    hits.addClass("searchHit");
+
+    if (hits.length){
+      const first = hits[0];
+
+      if (first.hasClass("filterHidden") && ui.classFilterBox) {
+        ui.classFilterBox.value = "";
+        applyVisibility();
+      }
+
+      first.removeClass("contextOnly hidden filterHidden");
+
+      cy.animate({ center: { eles: first }, zoom: Math.min(1.2, cy.zoom()) }, { duration: 350 });
+      updateStatus(`${hits.length} match(es) for "${q}".`);
+    } else {
+      updateStatus(`No matches for "${q}".`);
+    }
+  }
+
+  // -------- status line --------
+  function statusLine(stats){
+    if (!stats) return "Ready.";
+
+    const flags = [];
+    flags.push(`Classes: ${stats.classes}`);
+    flags.push(`SubClassOf: ${stats.subclassEdges}${ui.showSubclass.checked ? "" : " hidden"}`);
+    flags.push(`ObjProp edges: ${stats.objectPropEdges}${ui.showObjectProperties.checked ? "" : " hidden"}`);
+    flags.push(`DataProps: ${stats.dataPropNodes}${ui.showDataProperties.checked ? "" : " hidden"}`);
+
+    if (typeof stats.individuals === "number") flags.push(`Individuals: ${stats.individuals}`);
+
+    if (ui.classFilterBox && ui.classFilterBox.value.trim()) {
+      const visibleClasses = cy.nodes("[type='class']").filter(n => !n.hasClass("hidden") && !n.hasClass("filterHidden")).length;
+      flags.push(`Visible classes: ${visibleClasses}`);
+    }
+
+    return flags.join(" • ");
+  }
+
+  function updateStatus(text){
+    ui.statusText.textContent = text;
+  }
+
+  // -------- localStorage positions (per ontology) --------
+  function storageKey(ontologyFile){
+    return `ontologyViewer.positions::${ontologyFile}`;
+  }
+
+  function restorePositions(ontologyFile){
+    const raw = localStorage.getItem(storageKey(ontologyFile));
+    if (!raw) return false;
+    try{
+      const map = JSON.parse(raw);
+      let applied = 0;
+      cy.nodes().forEach(n => {
+        const pos = map[n.id()];
+        if (pos && typeof pos.x === "number" && typeof pos.y === "number"){
+          n.position({ x: pos.x, y: pos.y });
+          applied++;
+        }
+      });
+      return applied > 0;
+    } catch{
+      return false;
+    }
+  }
+
+  function scheduleSavePositions(){
+    if (saveScheduled) return;
+    saveScheduled = true;
+    requestAnimationFrame(() => {
+      saveScheduled = false;
+      savePositions();
+    });
+  }
+
+  function savePositions(){
+    if (!currentOntology) return;
+    const map = {};
+    cy.nodes().forEach(n => { map[n.id()] = n.position(); });
+    try{
+      localStorage.setItem(storageKey(currentOntology.file), JSON.stringify(map));
+    } catch(err){
+      console.warn("Failed saving positions", err);
+    }
+  }
+
+  // -------- utilities --------
+  function named(iri){ return { termType: "NamedNode", value: iri }; }
+
+  function iriToId(iri){
+    return "iri:" + encodeURIComponent(iri);
+  }
+
+  function compactIri(iri){
+    try{
+      const hash = iri.lastIndexOf("#");
+      if (hash >= 0 && hash < iri.length - 1) return iri.slice(hash + 1);
+      const slash = iri.lastIndexOf("/");
+      if (slash >= 0 && slash < iri.length - 1) return iri.slice(slash + 1);
+      return iri;
+    } catch{
+      return iri;
+    }
+  }
+
+  function addToMapArray(map, key, value){
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(value);
+  }
+
+  function termToReadable(term){
+    if (!term) return "";
+    if (term.termType === "NamedNode") {
+      // common XSD short names
+      if (term.value.startsWith(XSD)) return "xsd:" + term.value.slice(XSD.length);
+      return compactIri(term.value);
+    }
+    if (term.termType === "Literal") return term.value;
+    return String(term.value || "");
+  }
+
+  function escapeHtml(s){
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+})();
