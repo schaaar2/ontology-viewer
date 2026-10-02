@@ -22,7 +22,6 @@
   let saveScheduled = false;
 
   document.addEventListener("DOMContentLoaded", () => {
-    // Keep existing working IDs/structure from the original app
     ui.ontologySelect = document.getElementById("ontologySelect");
     ui.searchBox = document.getElementById("searchBox");
     ui.searchButton = document.getElementById("searchButton");
@@ -38,12 +37,11 @@
     ui.detailsContent = document.getElementById("detailsContent");
     ui.statusText = document.getElementById("statusText");
 
-    // Add new UI features without breaking existing HTML
     createDynamicUi();
     initCy();
     wireUi();
 
-    // IMPORTANT: preserve the original dropdown loading logic
+    // IMPORTANT: preserve original working dropdown loading logic
     loadCatalog();
   });
 
@@ -66,14 +64,12 @@
   }
 
   function createClassFilterControl(){
-    // If user already added it to HTML, just wire it
     if (document.getElementById("classFilterBox")) {
       ui.classFilterBox = document.getElementById("classFilterBox");
       ui.clearClassFilterButton = document.getElementById("clearClassFilterButton");
       return;
     }
 
-    // Otherwise inject into existing toolbar (.controls)
     const controls = document.querySelector(".controls");
     if (!controls) return;
 
@@ -87,7 +83,6 @@
       </div>
     `;
 
-    // Insert after search control if possible
     const searchControl = ui.searchBox ? ui.searchBox.closest(".control") : null;
     if (searchControl && searchControl.parentElement === controls) {
       searchControl.insertAdjacentElement("afterend", wrapper);
@@ -132,11 +127,8 @@
       }
     });
 
-    // If the user right-clicks inside the menu itself, don't open browser menu
     document.addEventListener("contextmenu", (evt) => {
-      if (ui.contextMenu && ui.contextMenu.contains(evt.target)) {
-        evt.preventDefault();
-      }
+      if (ui.contextMenu && ui.contextMenu.contains(evt.target)) evt.preventDefault();
     });
 
     window.addEventListener("resize", hideContextMenu);
@@ -208,14 +200,12 @@
       wheelSensitivity: 0.2
     });
 
-    // Details on click
     cy.on("tap", "node, edge", (evt) => {
       cy.elements().removeClass("selected");
       evt.target.addClass("selected");
       showDetails(evt.target);
     });
 
-    // Right click / context tap on class node opens menu
     cy.on("cxttap", "node[type='class']", (evt) => {
       if (evt.originalEvent) {
         if (evt.originalEvent.preventDefault) evt.originalEvent.preventDefault();
@@ -224,12 +214,10 @@
       showClassContextMenu(evt.target, evt.originalEvent);
     });
 
-    // Tap background hides menu
     cy.on("tap", (evt) => {
       if (evt.target === cy) hideContextMenu();
     });
 
-    // Save positions after drag
     cy.on("dragfree", "node", () => {
       scheduleSavePositions();
     });
@@ -324,7 +312,7 @@
     currentOntology = item;
     currentStats = null;
     graphIndex = emptyGraphIndex();
-    focusSelection = null; // reset focus mode on load
+    focusSelection = null; // reset focus on load
     hideContextMenu();
 
     try{
@@ -366,9 +354,7 @@
   // -------- parsing/building --------
   function buildGraphFromTurtle(ttlText){
     const parser = new N3.Parser({ format: "text/turtle" });
-    const store = new N3.Store();
     const quads = parser.parse(ttlText);
-    store.addQuads(quads);
 
     const rdfType = named(RDF + "type");
     const rdfsClass = named(RDFS + "Class");
@@ -388,13 +374,11 @@
     const objectProps = new Set();
     const dataProps = new Set();
 
-    // allow multiple domain/range
     const domains = new Map(); // prop -> [term]
     const ranges  = new Map(); // prop -> [term]
 
     const index = emptyGraphIndex();
 
-    // First pass: labels/comments/types and domain/range
     for (const q of quads){
       const s = q.subject, p = q.predicate, o = q.object;
 
@@ -419,7 +403,6 @@
       }
     }
 
-    // Ensure classes that appear in subclass axioms are included
     for (const q of quads){
       if (q.predicate.termType === "NamedNode" && q.predicate.value === subClassOf.value){
         if (q.subject.termType === "NamedNode") classes.add(q.subject.value);
@@ -427,8 +410,6 @@
       }
     }
 
-    // Individuals: any NamedNode with rdf:type some class in our class set
-    // Exclude things already known as class/property resources.
     const individualsByClass = new Map();
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== rdfType.value) continue;
@@ -448,7 +429,6 @@
     const elements = [];
     const nodeIds = new Set();
 
-    // class nodes
     for (const iri of classes){
       const id = iriToId(iri);
       nodeIds.add(id);
@@ -465,7 +445,6 @@
       });
     }
 
-    // object property edges (domain -> range) only when named and both are classes
     let objEdgeCount = 0;
     for (const propIri of objectProps){
       const domainTerms = domains.get(propIri) || [];
@@ -516,7 +495,6 @@
       }
     }
 
-    // data properties: nodes + edges from domain class -> prop node
     let dataNodeCount = 0;
     let dataEdgeCount = 0;
 
@@ -581,7 +559,6 @@
       }
     }
 
-    // subclass edges (direct asserted)
     let subclassCount = 0;
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
@@ -620,7 +597,6 @@
       subclassCount++;
     }
 
-    // individuals as context-only nodes/edges (only shown when navigated via context menu)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
 
@@ -671,7 +647,6 @@
       }
     }
 
-    // size heuristic for class nodes
     const degreeMap = new Map();
     for (const el of elements){
       if (el.data && el.data.source && el.data.target){
@@ -707,23 +682,17 @@
   function applyVisibility(){
     if (!cy) return;
 
-    // reset
     cy.elements().removeClass("hidden filterHidden focusHidden");
 
-    // Context-only (individuals) start hidden unless explicitly revealed
     cy.elements(".contextOnly").addClass("hidden");
 
-    // toggles
     cy.edges(".rel-subclass").toggleClass("hidden", !ui.showSubclass.checked);
     cy.edges(".rel-objprop").toggleClass("hidden", !ui.showObjectProperties.checked);
 
     cy.nodes("[type='dataprop']").toggleClass("hidden", !ui.showDataProperties.checked);
     cy.edges(".rel-dataprop").toggleClass("hidden", !ui.showDataProperties.checked);
 
-    // class filter applies next
     applyClassFilter();
-
-    // focus applies LAST and is authoritative
     applyFocusSelection();
 
     updateStatus(statusLine(currentStats));
@@ -737,7 +706,6 @@
 
     const hiddenClassIds = new Set();
 
-    // hide non-matching class nodes
     cy.nodes("[type='class']").forEach((node) => {
       const d = node.data();
       const haystack = [d.label, d.labelFull, d.iri, d.comment]
@@ -751,7 +719,6 @@
       }
     });
 
-    // hide edges attached to hidden nodes
     cy.edges().forEach((edge) => {
       if (
         hiddenClassIds.has(edge.source().id()) ||
@@ -763,7 +730,6 @@
       }
     });
 
-    // hide dataprop nodes not connected to a visible class (via visible dp edges)
     cy.nodes("[type='dataprop']").forEach((node) => {
       const connectedVisible = node.connectedEdges(".rel-dataprop").filter((edge) => {
         return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
@@ -771,7 +737,6 @@
       if (!connectedVisible.length) node.addClass("filterHidden");
     });
 
-    // hide individual nodes not connected to a visible class (when revealed)
     cy.nodes("[type='individual']").forEach((node) => {
       const connectedVisible = node.connectedEdges(".rel-individual").filter((edge) => {
         return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
@@ -781,45 +746,44 @@
   }
 
   function applyFocusSelection(){
-    if (!focusSelection || !cy) return;
+    if (!cy || !focusSelection) return;
 
-    const nodeIds = focusSelection.nodeIds || new Set();
-    const edgeIds = focusSelection.edgeIds || new Set();
+    const allowedNodeIds = new Set(focusSelection.nodeIds || []);
+    const allowedEdgeIds = new Set(focusSelection.edgeIds || []);
 
-    // Ensure sources/targets of focused edges are included
-    for (const eid of edgeIds){
-      const e = cy.getElementById(eid);
-      if (e && e.length && e.isEdge && e.isEdge()){
-        nodeIds.add(e.source().id());
-        nodeIds.add(e.target().id());
+    for (const edgeId of allowedEdgeIds){
+      const edge = cy.getElementById(edgeId);
+      if (edge && edge.length) {
+        allowedNodeIds.add(edge.source().id());
+        allowedNodeIds.add(edge.target().id());
       }
     }
 
-    // Hide all not explicitly focused
-    cy.elements().forEach((ele) => {
-      const id = ele.id();
-      const keep =
-        (ele.isNode && ele.isNode() && nodeIds.has(id)) ||
-        (ele.isEdge && ele.isEdge() && edgeIds.has(id));
-      if (!keep) ele.addClass("focusHidden");
+    cy.nodes().forEach((node) => {
+      if (allowedNodeIds.has(node.id())) {
+        node.removeClass("hidden filterHidden focusHidden contextOnly");
+      } else {
+        node.addClass("focusHidden");
+      }
     });
 
-    // Force focused elements visible, overriding other hides
-    for (const nid of nodeIds){
-      const n = cy.getElementById(nid);
-      if (n && n.length) n.removeClass("hidden filterHidden focusHidden contextOnly");
-    }
-    for (const eid of edgeIds){
-      const e = cy.getElementById(eid);
-      if (e && e.length) e.removeClass("hidden filterHidden focusHidden contextOnly");
-    }
+    cy.edges().forEach((edge) => {
+      if (allowedEdgeIds.has(edge.id())) {
+        edge.removeClass("hidden filterHidden focusHidden contextOnly");
+        edge.source().removeClass("hidden filterHidden focusHidden contextOnly");
+        edge.target().removeClass("hidden filterHidden focusHidden contextOnly");
+      } else {
+        edge.addClass("focusHidden");
+      }
+    });
   }
 
   function setFocusSelection(nodeIds, edgeIds, label){
+    // Replacement action
     focusSelection = {
       nodeIds: new Set(nodeIds || []),
       edgeIds: new Set(edgeIds || []),
-      label: label || "Focus"
+      label: label || "Focused selection"
     };
     applyVisibility();
     cy.fit(visibleElements(), 35);
@@ -831,12 +795,54 @@
     cy.fit(visibleElements(), 35);
   }
 
+  // ADDITIVE focus navigation:
+  // - if focusSelection exists: add to it
+  // - else: initialize from currently visible elements and add to it
   function contextNavigate(sourceNodeId, targetNodeId, edgeId, label){
-    const nodes = [sourceNodeId, targetNodeId].filter(Boolean);
-    const edges = edgeId ? [edgeId] : [];
-    setFocusSelection(nodes, edges, label || "Focus");
-    // Do not clear user's typed filter. Do not reload ontology.
-    navigateToNode(targetNodeId, edgeId, { preserveFilter: true });
+    if (!cy) return;
+
+    const nodeIds = new Set();
+    const edgeIds = new Set();
+
+    if (focusSelection) {
+      for (const id of focusSelection.nodeIds || []) nodeIds.add(id);
+      for (const id of focusSelection.edgeIds || []) edgeIds.add(id);
+    } else {
+      // initialize from what is currently visible BEFORE any new focus is applied
+      cy.nodes().not(".hidden").not(".filterHidden").not(".focusHidden").forEach((node) => {
+        nodeIds.add(node.id());
+      });
+
+      cy.edges().not(".hidden").not(".filterHidden").not(".focusHidden").forEach((edge) => {
+        edgeIds.add(edge.id());
+        nodeIds.add(edge.source().id());
+        nodeIds.add(edge.target().id());
+      });
+    }
+
+    if (sourceNodeId) nodeIds.add(sourceNodeId);
+    if (targetNodeId) nodeIds.add(targetNodeId);
+
+    if (edgeId) {
+      edgeIds.add(edgeId);
+      const edge = cy.getElementById(edgeId);
+      if (edge && edge.length) {
+        nodeIds.add(edge.source().id());
+        nodeIds.add(edge.target().id());
+      }
+    }
+
+    focusSelection = {
+      nodeIds,
+      edgeIds,
+      label: focusSelection ? `${focusSelection.label}; added ${label}` : (label || "Focus")
+    };
+
+    applyVisibility();
+    if (targetNodeId || sourceNodeId) {
+      navigateToNode(targetNodeId || sourceNodeId, edgeId, { preserveFilter: true });
+    }
+    cy.fit(visibleElements(), 35);
   }
 
   function visibleElements(){
@@ -1070,14 +1076,9 @@
   }
 
   function contextMenuPosition(node, originalEvent){
-    if (
-      originalEvent &&
-      typeof originalEvent.clientX === "number" &&
-      typeof originalEvent.clientY === "number"
-    ) {
+    if (originalEvent && typeof originalEvent.clientX === "number" && typeof originalEvent.clientY === "number") {
       return { x: originalEvent.clientX + 8, y: originalEvent.clientY + 8 };
     }
-
     const rect = cy.container().getBoundingClientRect();
     const rendered = node.renderedPosition();
     return { x: rect.left + rendered.x + 8, y: rect.top + rendered.y + 8 };
@@ -1090,12 +1091,8 @@
     let left = rect.left;
     let top = rect.top;
 
-    if (rect.right > window.innerWidth - margin) {
-      left = window.innerWidth - rect.width - margin;
-    }
-    if (rect.bottom > window.innerHeight - margin) {
-      top = window.innerHeight - rect.height - margin;
-    }
+    if (rect.right > window.innerWidth - margin) left = window.innerWidth - rect.width - margin;
+    if (rect.bottom > window.innerHeight - margin) top = window.innerHeight - rect.height - margin;
     if (left < margin) left = margin;
     if (top < margin) top = margin;
 
@@ -1110,20 +1107,18 @@
   function revealContextElement(nodeId, edgeId){
     const node = cy.getElementById(nodeId);
     const edge = cy.getElementById(edgeId);
-
     if (node && node.length) node.removeClass("contextOnly hidden filterHidden focusHidden");
     if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden focusHidden");
   }
 
   // -------- navigation (no ontology reload, no filter overwrite) --------
-  function navigateToNode(nodeId, edgeId, options = {}){
+  function navigateToNode(nodeId, edgeId){
     const node = cy.getElementById(nodeId);
     if (!node || !node.length) {
       updateStatus("Target is not available in the graph.");
       return;
     }
 
-    // Ensure toggles allow visibility (do not touch class filter box)
     if (node.data("type") === "dataprop" && ui.showDataProperties && !ui.showDataProperties.checked) {
       ui.showDataProperties.checked = true;
     }
@@ -1135,7 +1130,6 @@
 
     node.removeClass("contextOnly hidden filterHidden focusHidden");
 
-    // Re-apply visibility rules (keeps focus if active)
     applyVisibility();
 
     cy.elements().removeClass("selected");
@@ -1250,9 +1244,7 @@
       flags.push(`Visible classes: ${visibleClasses}`);
     }
 
-    if (focusSelection) {
-      flags.push(`Focus: ${focusSelection.label || "active"}`);
-    }
+    if (focusSelection) flags.push(`Focus: ${focusSelection.label || "active"}`);
 
     return flags.join(" • ");
   }
@@ -1332,7 +1324,6 @@
   function termToReadable(term){
     if (!term) return "";
     if (term.termType === "NamedNode") {
-      // common XSD short names
       if (term.value.startsWith(XSD)) return "xsd:" + term.value.slice(XSD.length);
       return compactIri(term.value);
     }
