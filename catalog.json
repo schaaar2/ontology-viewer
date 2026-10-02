@@ -1,5 +1,9 @@
 [
   {
+    "title": "Site Readiness Demo",
+    "file": "ontologies/site_readiness_demo.ttl"
+  },
+  {
     "title": "ClinOps Core",
     "file": "ontologies/clinops-core.ttl"
   },
