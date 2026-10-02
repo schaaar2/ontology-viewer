@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OWL Ontology Viewer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/n3@1.17.2/browser/n3.min.js"></script>
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="title">OWL Ontology Viewer</div>
+        <div class="subtitle">Cytoscape.js + N3.js (Turtle in-browser)</div>
+      </div>
+
+      <div class="controls">
+        <label class="control">
+          <span>Ontology</span>
+          <select id="ontologySelect"></select>
+        </label>
+
+        <label class="control grow">
+          <span>Search (label or IRI)</span>
+          <div class="row">
+            <input id="searchBox" type="search" placeholder="e.g. Patient, USDM:Study, http://..." />
+            <button id="searchButton" title="Find">Find</button>
+          </div>
+        </label>
+
+        <label class="control">
+          <span>Layout</span>
+          <div class="row">
+            <select id="layoutSelect">
+              <option value="breadthfirst">Hierarchical</option>
+              <option value="cose">Organic</option>
+              <option value="circle">Circular</option>
+              <option value="grid">Grid</option>
+            </select>
+            <button id="applyLayoutButton">Apply</button>
+          </div>
+        </label>
+
+        <div class="toggles">
+          <label><input type="checkbox" id="showSubclass" checked /> SubClassOf</label>
+          <label><input type="checkbox" id="showObjectProperties" checked /> Object properties</label>
+          <label><input type="checkbox" id="showDataProperties" checked /> Data properties</label>
+        </div>
+
+        <div class="buttons">
+          <button id="fitButton">Fit</button>
+          <button id="resetPositionsButton" title="Clears saved positions for the selected ontology">Reset positions</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="graph">
+        <div id="cy" aria-label="Ontology graph"></div>
+        <div class="status" id="statusText">Loading…</div>
+      </section>
+
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>Details</h2>
+          <div id="detailsContent" class="details muted">Click a node or edge.</div>
+        </section>
+
+        <section class="panel">
+          <h2>Legend</h2>
+          <div class="legend">
+            <div><span class="swatch class"></span> Class</div>
+            <div><span class="swatch objprop"></span> Object property (domain → range)</div>
+            <div><span class="swatch dataprop"></span> Data property</div>
+            <div><span class="swatch subclass"></span> rdfs:subClassOf</div>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>
+        Tip: Drag nodes to arrange; positions are saved per ontology in your browser.
+      </span>
+    </footer>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
