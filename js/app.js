@@ -14,6 +14,11 @@
   let currentStats = null;
   let graphIndex = emptyGraphIndex();
 
+  // focusSelection:
+  //   null OR { nodeIds:Set<string>, edgeIds:Set<string>, label:string }
+  // Focus mode is applied LAST and hides everything except the focused elements.
+  let focusSelection = null;
+
   let saveScheduled = false;
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -196,6 +201,7 @@
         },
         { selector: ".hidden", style: { "display": "none" } },
         { selector: ".filterHidden", style: { "display": "none" } },
+        { selector: ".focusHidden", style: { "display": "none" } },
         { selector: ".searchHit", style: { "border-width": 3, "border-color": "#67b7ff" } },
         { selector: ".selected", style: { "border-width": 4, "border-color": "#ffffff" } },
       ],
@@ -255,14 +261,15 @@
 
     if (ui.clearClassFilterButton) {
       ui.clearClassFilterButton.addEventListener("click", () => {
+        // Clear ONLY the class filter, not focus mode
         ui.classFilterBox.value = "";
         applyVisibility();
-        cy.fit(undefined, 30);
+        cy.fit(visibleElements(), 30);
       });
     }
 
     ui.applyLayoutButton.addEventListener("click", () => runLayout(ui.layoutSelect.value, true));
-    ui.fitButton.addEventListener("click", () => cy.fit(cy.elements().not(".hidden").not(".filterHidden"), 30));
+    ui.fitButton.addEventListener("click", () => cy.fit(visibleElements(), 30));
 
     ui.resetPositionsButton.addEventListener("click", () => {
       if (!currentOntology) return;
@@ -317,9 +324,8 @@
     currentOntology = item;
     currentStats = null;
     graphIndex = emptyGraphIndex();
+    focusSelection = null; // reset focus mode on load
     hideContextMenu();
-
-    if (ui.classFilterBox) ui.classFilterBox.value = "";
 
     try{
       updateStatus(`Loading ${item.title || item.file}…`);
@@ -336,7 +342,7 @@
       applyVisibility();
 
       if (!restored) runLayout(ui.layoutSelect.value, true);
-      else cy.fit(cy.elements().not(".hidden").not(".filterHidden"), 40);
+      else cy.fit(visibleElements(), 40);
 
       currentStats = graph.stats;
       updateStatus(statusLine(graph.stats));
@@ -697,12 +703,12 @@
     };
   }
 
-  // -------- visibility: toggles + filtering --------
+  // -------- visibility: toggles + filtering + focus --------
   function applyVisibility(){
     if (!cy) return;
 
     // reset
-    cy.elements().removeClass("hidden filterHidden");
+    cy.elements().removeClass("hidden filterHidden focusHidden");
 
     // Context-only (individuals) start hidden unless explicitly revealed
     cy.elements(".contextOnly").addClass("hidden");
@@ -714,8 +720,11 @@
     cy.nodes("[type='dataprop']").toggleClass("hidden", !ui.showDataProperties.checked);
     cy.edges(".rel-dataprop").toggleClass("hidden", !ui.showDataProperties.checked);
 
-    // class filter applies on top
+    // class filter applies next
     applyClassFilter();
+
+    // focus applies LAST and is authoritative
+    applyFocusSelection();
 
     updateStatus(statusLine(currentStats));
   }
@@ -757,7 +766,7 @@
     // hide dataprop nodes not connected to a visible class (via visible dp edges)
     cy.nodes("[type='dataprop']").forEach((node) => {
       const connectedVisible = node.connectedEdges(".rel-dataprop").filter((edge) => {
-        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden");
+        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
       });
       if (!connectedVisible.length) node.addClass("filterHidden");
     });
@@ -765,24 +774,85 @@
     // hide individual nodes not connected to a visible class (when revealed)
     cy.nodes("[type='individual']").forEach((node) => {
       const connectedVisible = node.connectedEdges(".rel-individual").filter((edge) => {
-        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden");
+        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
       });
       if (!connectedVisible.length) node.addClass("filterHidden");
     });
   }
 
+  function applyFocusSelection(){
+    if (!focusSelection || !cy) return;
+
+    const nodeIds = focusSelection.nodeIds || new Set();
+    const edgeIds = focusSelection.edgeIds || new Set();
+
+    // Ensure sources/targets of focused edges are included
+    for (const eid of edgeIds){
+      const e = cy.getElementById(eid);
+      if (e && e.length && e.isEdge && e.isEdge()){
+        nodeIds.add(e.source().id());
+        nodeIds.add(e.target().id());
+      }
+    }
+
+    // Hide all not explicitly focused
+    cy.elements().forEach((ele) => {
+      const id = ele.id();
+      const keep =
+        (ele.isNode && ele.isNode() && nodeIds.has(id)) ||
+        (ele.isEdge && ele.isEdge() && edgeIds.has(id));
+      if (!keep) ele.addClass("focusHidden");
+    });
+
+    // Force focused elements visible, overriding other hides
+    for (const nid of nodeIds){
+      const n = cy.getElementById(nid);
+      if (n && n.length) n.removeClass("hidden filterHidden focusHidden contextOnly");
+    }
+    for (const eid of edgeIds){
+      const e = cy.getElementById(eid);
+      if (e && e.length) e.removeClass("hidden filterHidden focusHidden contextOnly");
+    }
+  }
+
+  function setFocusSelection(nodeIds, edgeIds, label){
+    focusSelection = {
+      nodeIds: new Set(nodeIds || []),
+      edgeIds: new Set(edgeIds || []),
+      label: label || "Focus"
+    };
+    applyVisibility();
+    cy.fit(visibleElements(), 35);
+  }
+
+  function clearFocusSelection(){
+    focusSelection = null;
+    applyVisibility();
+    cy.fit(visibleElements(), 35);
+  }
+
+  function contextNavigate(sourceNodeId, targetNodeId, edgeId, label){
+    const nodes = [sourceNodeId, targetNodeId].filter(Boolean);
+    const edges = edgeId ? [edgeId] : [];
+    setFocusSelection(nodes, edges, label || "Focus");
+    // Do not clear user's typed filter. Do not reload ontology.
+    navigateToNode(targetNodeId, edgeId, { preserveFilter: true });
+  }
+
+  function visibleElements(){
+    return cy.elements().not(".hidden").not(".filterHidden").not(".focusHidden");
+  }
+
   // -------- layouts --------
   function runLayout(name, animate){
     if (!cy) return;
-    const visibleElements = cy.elements().not(".hidden").not(".filterHidden");
-
     const opts = {
       name,
       animate: !!animate,
       animationDuration: 500,
       fit: true,
       padding: 40,
-      eles: visibleElements
+      eles: visibleElements()
     };
 
     if (name === "breadthfirst"){
@@ -826,11 +896,39 @@
     title.textContent = label;
     menu.appendChild(title);
 
+    // Focus controls
+    const focusBar = document.createElement("div");
+    focusBar.style.display = "flex";
+    focusBar.style.gap = "8px";
+    focusBar.style.padding = "0.25rem 0.4rem 0.35rem 0.4rem";
+    focusBar.style.borderBottom = "1px solid #eef0f3";
+    focusBar.style.marginBottom = "0.35rem";
+    focusBar.style.flexWrap = "wrap";
+
+    const showOnlyBtn = makeMenuPillButton("Show only this class", () => {
+      hideContextMenu();
+      setFocusSelection([node.id()], [], `Only ${label}`);
+      cy.elements().removeClass("selected");
+      node.addClass("selected");
+      showDetails(node);
+    });
+    focusBar.appendChild(showOnlyBtn);
+
+    if (focusSelection) {
+      const clearFocusBtn = makeMenuPillButton("Clear focus filter", () => {
+        hideContextMenu();
+        clearFocusSelection();
+      });
+      focusBar.appendChild(clearFocusBtn);
+    }
+
+    menu.appendChild(focusBar);
+
     appendClassMenuGroup(
       menu,
       "Children",
       graphIndex.childrenByClass.get(iri) || [],
-      (item) => navigateToNode(iriToId(item.classIri), item.edgeId),
+      (item) => contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + child ${item.classLabel}`),
       (item) => item.classLabel
     );
 
@@ -838,7 +936,7 @@
       menu,
       "Parents",
       graphIndex.parentsByClass.get(iri) || [],
-      (item) => navigateToNode(iriToId(item.classIri), item.edgeId),
+      (item) => contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + parent ${item.classLabel}`),
       (item) => item.classLabel
     );
 
@@ -851,12 +949,11 @@
           ui.showDataProperties.checked = true;
           applyVisibility();
         }
-        navigateToNode(item.nodeId, item.edgeId);
+        contextNavigate(node.id(), item.nodeId, item.edgeId, `${label} + data property ${item.label}`);
       },
       (item) => item.range ? `${item.label} : ${item.range}` : item.label
     );
 
-    // Object properties: show outgoing and incoming in one list
     const objectItems = [
       ...(graphIndex.objectOutByClass.get(iri) || []).map((item) => ({
         ...item,
@@ -877,7 +974,7 @@
           ui.showObjectProperties.checked = true;
           applyVisibility();
         }
-        navigateToNode(iriToId(item.classIri), item.edgeId);
+        contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + object property ${item.label}`);
       },
       (item) => item.menuLabel
     );
@@ -888,7 +985,7 @@
       graphIndex.individualsByClass.get(iri) || [],
       (item) => {
         revealContextElement(item.nodeId, item.edgeId);
-        navigateToNode(item.nodeId, item.edgeId);
+        contextNavigate(node.id(), item.nodeId, item.edgeId, `${label} + individual ${item.label}`);
       },
       (item) => item.label
     );
@@ -898,6 +995,24 @@
     menu.style.top = `${pos.y}px`;
     menu.style.display = "block";
     keepMenuInViewport(menu);
+  }
+
+  function makeMenuPillButton(text, onClick){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.style.padding = "0.28rem 0.55rem";
+    b.style.borderRadius = "999px";
+    b.style.border = "1px solid #d7deea";
+    b.style.background = "#f6f9ff";
+    b.style.cursor = "pointer";
+    b.style.fontSize = "0.82rem";
+    b.style.color = "#1f3b57";
+    b.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      onClick();
+    });
+    return b;
   }
 
   function appendClassMenuGroup(menu, titleText, items, onClick, getLabel){
@@ -996,35 +1111,32 @@
     const node = cy.getElementById(nodeId);
     const edge = cy.getElementById(edgeId);
 
-    if (node && node.length) node.removeClass("contextOnly hidden filterHidden");
-    if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden");
+    if (node && node.length) node.removeClass("contextOnly hidden filterHidden focusHidden");
+    if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden focusHidden");
   }
 
-  function navigateToNode(nodeId, edgeId){
+  // -------- navigation (no ontology reload, no filter overwrite) --------
+  function navigateToNode(nodeId, edgeId, options = {}){
     const node = cy.getElementById(nodeId);
     if (!node || !node.length) {
       updateStatus("Target is not available in the graph.");
       return;
     }
 
-    // Clear filter if it hides the node
-    if (node.hasClass("filterHidden") && ui.classFilterBox) {
-      ui.classFilterBox.value = "";
-      applyVisibility();
-    }
-
-    // Ensure toggles allow visibility
+    // Ensure toggles allow visibility (do not touch class filter box)
     if (node.data("type") === "dataprop" && ui.showDataProperties && !ui.showDataProperties.checked) {
       ui.showDataProperties.checked = true;
-      applyVisibility();
     }
 
     if (edgeId) {
       const edge = cy.getElementById(edgeId);
-      if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden");
+      if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden focusHidden");
     }
 
-    node.removeClass("contextOnly hidden filterHidden");
+    node.removeClass("contextOnly hidden filterHidden focusHidden");
+
+    // Re-apply visibility rules (keeps focus if active)
+    applyVisibility();
 
     cy.elements().removeClass("selected");
     node.addClass("selected");
@@ -1111,13 +1223,8 @@
 
     if (hits.length){
       const first = hits[0];
-
-      if (first.hasClass("filterHidden") && ui.classFilterBox) {
-        ui.classFilterBox.value = "";
-        applyVisibility();
-      }
-
-      first.removeClass("contextOnly hidden filterHidden");
+      first.removeClass("contextOnly hidden filterHidden focusHidden");
+      applyVisibility();
 
       cy.animate({ center: { eles: first }, zoom: Math.min(1.2, cy.zoom()) }, { duration: 350 });
       updateStatus(`${hits.length} match(es) for "${q}".`);
@@ -1139,8 +1246,12 @@
     if (typeof stats.individuals === "number") flags.push(`Individuals: ${stats.individuals}`);
 
     if (ui.classFilterBox && ui.classFilterBox.value.trim()) {
-      const visibleClasses = cy.nodes("[type='class']").filter(n => !n.hasClass("hidden") && !n.hasClass("filterHidden")).length;
+      const visibleClasses = cy.nodes("[type='class']").filter(n => !n.hasClass("hidden") && !n.hasClass("filterHidden") && !n.hasClass("focusHidden")).length;
       flags.push(`Visible classes: ${visibleClasses}`);
+    }
+
+    if (focusSelection) {
+      flags.push(`Focus: ${focusSelection.label || "active"}`);
     }
 
     return flags.join(" • ");
