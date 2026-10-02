@@ -48,19 +48,22 @@
   // -------- graph index for context menu navigation --------
   function emptyGraphIndex(){
     return {
-      parentsByClass: new Map(),     // classIri -> [{classIri, classLabel, edgeId}]
-      childrenByClass: new Map(),    // classIri -> [{classIri, classLabel, edgeId}]
-      objectOutByClass: new Map(),   // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
-      objectInByClass: new Map(),    // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
-      dataPropsByClass: new Map(),   // classIri -> [{propIri, label, nodeId, range, edgeId}]
-      individualsByClass: new Map()  // classIri -> [{individualIri, label, nodeId, edgeId}]
+      parentsByClass: new Map(),        // classIri -> [{classIri, classLabel, edgeId}]
+      childrenByClass: new Map(),       // classIri -> [{classIri, classLabel, edgeId}]
+      objectOutByClass: new Map(),      // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
+      objectInByClass: new Map(),       // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
+      dataPropsByClass: new Map(),      // classIri -> [{propIri, label, nodeId, range, edgeId}]
+      individualsByClass: new Map(),    // classIri -> [{individualIri, label, nodeId, edgeId}]
+      restrictionOutByClass: new Map(), // classIri -> [{propIri,label,quantifier,targetIri,targetLabel,edgeId}]
+      restrictionInByClass: new Map()   // classIri -> [{propIri,label,quantifier,sourceIri,sourceLabel,edgeId}]
     };
   }
 
-  // -------- dynamic UI (class filter + context menu container) --------
+  // -------- dynamic UI (class filter + context menu container + restrictions toggle) --------
   function createDynamicUi(){
     createClassFilterControl();
     createContextMenu();
+    createRestrictionsToggleIfMissing();
   }
 
   function createClassFilterControl(){
@@ -92,6 +95,22 @@
 
     ui.classFilterBox = document.getElementById("classFilterBox");
     ui.clearClassFilterButton = document.getElementById("clearClassFilterButton");
+  }
+
+  function createRestrictionsToggleIfMissing(){
+    // If page already has it, use it. Otherwise add it to existing .toggles.
+    let cb = document.getElementById("showRestrictions");
+    if (!cb) {
+      const toggles = document.querySelector(".toggles");
+      if (!toggles) return;
+
+      const label = document.createElement("label");
+      label.style.whiteSpace = "nowrap";
+      label.innerHTML = `<input type="checkbox" id="showRestrictions" checked /> Restrictions`;
+      toggles.appendChild(label);
+      cb = label.querySelector("#showRestrictions");
+    }
+    ui.showRestrictions = cb;
   }
 
   function createContextMenu(){
@@ -270,6 +289,7 @@
     ui.showSubclass.addEventListener("change", onToggle);
     ui.showObjectProperties.addEventListener("change", onToggle);
     ui.showDataProperties.addEventListener("change", onToggle);
+    if (ui.showRestrictions) ui.showRestrictions.addEventListener("change", onToggle);
 
     window.addEventListener("resize", () => {
       if (cy) cy.resize();
@@ -354,7 +374,9 @@
   // -------- parsing/building --------
   function buildGraphFromTurtle(ttlText){
     const parser = new N3.Parser({ format: "text/turtle" });
+    const store = new N3.Store();
     const quads = parser.parse(ttlText);
+    store.addQuads(quads);
 
     const rdfType = named(RDF + "type");
     const rdfsClass = named(RDFS + "Class");
@@ -366,6 +388,12 @@
     const owlDatatypeProperty = named(OWL + "DatatypeProperty");
     const rdfsDomain = named(RDFS + "domain");
     const rdfsRange = named(RDFS + "range");
+
+    const owlRestriction = named(OWL + "Restriction");
+    const owlOnProperty = named(OWL + "onProperty");
+    const owlSomeValuesFrom = named(OWL + "someValuesFrom");
+    const owlAllValuesFrom = named(OWL + "allValuesFrom");
+    const owlHasValue = named(OWL + "hasValue");
 
     const labels = new Map();
     const comments = new Map();
@@ -379,6 +407,7 @@
 
     const index = emptyGraphIndex();
 
+    // First pass: labels/comments/types and domain/range
     for (const q of quads){
       const s = q.subject, p = q.predicate, o = q.object;
 
@@ -403,6 +432,7 @@
       }
     }
 
+    // Ensure classes that appear in subclass axioms are included
     for (const q of quads){
       if (q.predicate.termType === "NamedNode" && q.predicate.value === subClassOf.value){
         if (q.subject.termType === "NamedNode") classes.add(q.subject.value);
@@ -410,6 +440,7 @@
       }
     }
 
+    // Individuals: any NamedNode with rdf:type some class in our class set
     const individualsByClass = new Map();
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== rdfType.value) continue;
@@ -428,7 +459,9 @@
 
     const elements = [];
     const nodeIds = new Set();
+    const edgeIds = new Set(); // to avoid dupes
 
+    // class nodes
     for (const iri of classes){
       const id = iriToId(iri);
       nodeIds.add(id);
@@ -445,6 +478,7 @@
       });
     }
 
+    // object property edges (domain -> range) only when named and both are classes
     let objEdgeCount = 0;
     for (const propIri of objectProps){
       const domainTerms = domains.get(propIri) || [];
@@ -461,6 +495,9 @@
           if (!classes.has(dIri) || !classes.has(rIri)) continue;
 
           const eid = `obj:${iriToId(propIri)}:${iriToId(dIri)}->${iriToId(rIri)}`;
+          if (edgeIds.has(eid)) continue;
+          edgeIds.add(eid);
+
           elements.push({
             data: {
               id: eid,
@@ -495,6 +532,7 @@
       }
     }
 
+    // data properties: nodes + edges from domain class -> prop node
     let dataNodeCount = 0;
     let dataEdgeCount = 0;
 
@@ -533,6 +571,9 @@
         }
 
         const eid = `dpedge:${iriToId(dIri)}->${propNodeId}`;
+        if (edgeIds.has(eid)) continue;
+        edgeIds.add(eid);
+
         elements.push({
           data: {
             id: eid,
@@ -559,16 +600,21 @@
       }
     }
 
+    // subclass edges (direct asserted), for named superclass objects only
     let subclassCount = 0;
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
-      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+      if (q.subject.termType !== "NamedNode") continue;
+      if (q.object.termType !== "NamedNode") continue;
 
       const child = q.subject.value;
       const parent = q.object.value;
       if (!classes.has(child) || !classes.has(parent)) continue;
 
       const eid = `sc:${iriToId(child)}->${iriToId(parent)}`;
+      if (edgeIds.has(eid)) continue;
+      edgeIds.add(eid);
+
       elements.push({
         data: {
           id: eid,
@@ -597,6 +643,99 @@
       subclassCount++;
     }
 
+    // OWL subclass restrictions: rdfs:subClassOf _:bnode where _:bnode is a Restriction
+    let restrictionEdgeCount = 0;
+
+    // Gather candidate restrictions from subclass bnodes
+    const restrictionCandidates = [];
+    for (const q of quads){
+      if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
+      if (q.subject.termType !== "NamedNode") continue;
+      if (q.object.termType !== "BlankNode") continue;
+
+      restrictionCandidates.push({ classIri: q.subject.value, bnode: q.object });
+    }
+
+    for (const { classIri, bnode } of restrictionCandidates){
+      if (!classes.has(classIri)) continue;
+
+      const bn = bnode; // term
+      const onProps = store.getObjects(bn, owlOnProperty, null) || [];
+      if (!onProps.length) continue;
+      const onProp = onProps.find(t => t.termType === "NamedNode");
+      if (!onProp) continue;
+
+      const some = store.getObjects(bn, owlSomeValuesFrom, null) || [];
+      const all = store.getObjects(bn, owlAllValuesFrom, null) || [];
+      const hv  = store.getObjects(bn, owlHasValue, null) || [];
+
+      // Determine if it's a restriction:
+      const isTypedRestriction = store.countQuads(bn, rdfType, owlRestriction, null) > 0;
+      const hasPattern = !!(some.length || all.length || hv.length);
+      if (!isTypedRestriction && !hasPattern) continue;
+
+      // Choose quantifier + filler (prefer some, then all, then hasValue)
+      let quantifier = null;
+      let filler = null;
+
+      if (some.length) { quantifier = "some"; filler = some[0]; }
+      else if (all.length) { quantifier = "only"; filler = all[0]; }
+      else if (hv.length) { quantifier = "value"; filler = hv[0]; }
+
+      if (!quantifier || !filler) continue;
+
+      // Only draw edges to named class fillers that already exist as classes
+      // (conservative: doesn't create unknown nodes)
+      if (filler.termType !== "NamedNode") continue;
+
+      const targetIri = filler.value;
+      if (!classes.has(targetIri)) continue;
+
+      const propIri = onProp.value;
+      const propLabel = labels.get(propIri) || compactIri(propIri);
+      const targetLabel = labels.get(targetIri) || compactIri(targetIri);
+
+      const edgeLabel = `${propLabel} ${quantifier}`;
+      const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(targetIri)}`;
+      const eid = dedupeEdgeId(eidBase, edgeIds);
+
+      elements.push({
+        data: {
+          id: eid,
+          source: iriToId(classIri),
+          target: iriToId(targetIri),
+          iri: propIri,
+          type: "restrictionEdge",
+          label: edgeLabel,
+          quantifier,
+          comment: comments.get(propIri) || "",
+          color: "rgba(255,157,122,.85)"
+        },
+        classes: "rel-restriction"
+      });
+
+      addToMapArray(index.restrictionOutByClass, classIri, {
+        propIri,
+        label: propLabel,
+        quantifier,
+        targetIri,
+        targetLabel,
+        edgeId: eid
+      });
+
+      addToMapArray(index.restrictionInByClass, targetIri, {
+        propIri,
+        label: propLabel,
+        quantifier,
+        sourceIri: classIri,
+        sourceLabel: labels.get(classIri) || compactIri(classIri),
+        edgeId: eid
+      });
+
+      restrictionEdgeCount++;
+    }
+
+    // individuals as context-only nodes/edges (only shown when navigated via context menu)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
 
@@ -622,19 +761,23 @@
           individualNodeCount++;
         }
 
-        elements.push({
-          data: {
-            id: edgeId,
-            source: iriToId(classIri),
-            target: nodeId,
-            iri: rdfType.value,
-            type: "individualType",
-            label: "type",
-            comment: "",
-            color: "rgba(164,130,230,.75)"
-          },
-          classes: "rel-individual contextOnly"
-        });
+        if (!edgeIds.has(edgeId)) {
+          edgeIds.add(edgeId);
+          elements.push({
+            data: {
+              id: edgeId,
+              source: iriToId(classIri),
+              target: nodeId,
+              iri: rdfType.value,
+              type: "individualType",
+              label: "type",
+              comment: "",
+              color: "rgba(164,130,230,.75)"
+            },
+            classes: "rel-individual contextOnly"
+          });
+          individualEdgeCount++;
+        }
 
         addToMapArray(index.individualsByClass, classIri, {
           individualIri,
@@ -642,11 +785,10 @@
           nodeId,
           edgeId
         });
-
-        individualEdgeCount++;
       }
     }
 
+    // size heuristic for class nodes
     const degreeMap = new Map();
     for (const el of elements){
       if (el.data && el.data.source && el.data.target){
@@ -669,6 +811,7 @@
         objectProperties: objectProps.size,
         dataProperties: dataProps.size,
         subclassEdges: subclassCount,
+        restrictionEdges: restrictionEdgeCount,
         objectPropEdges: objEdgeCount,
         dataPropNodes: dataNodeCount,
         dataPropEdges: dataEdgeCount,
@@ -676,6 +819,17 @@
         individualEdges: individualEdgeCount
       }
     };
+  }
+
+  function dedupeEdgeId(baseId, edgeIdsSet){
+    let eid = baseId;
+    let i = 2;
+    while (edgeIdsSet.has(eid)) {
+      eid = `${baseId}#${i}`;
+      i++;
+    }
+    edgeIdsSet.add(eid);
+    return eid;
   }
 
   // -------- visibility: toggles + filtering + focus --------
@@ -688,6 +842,7 @@
 
     cy.edges(".rel-subclass").toggleClass("hidden", !ui.showSubclass.checked);
     cy.edges(".rel-objprop").toggleClass("hidden", !ui.showObjectProperties.checked);
+    cy.edges(".rel-restriction").toggleClass("hidden", ui.showRestrictions ? !ui.showRestrictions.checked : false);
 
     cy.nodes("[type='dataprop']").toggleClass("hidden", !ui.showDataProperties.checked);
     cy.edges(".rel-dataprop").toggleClass("hidden", !ui.showDataProperties.checked);
@@ -840,7 +995,7 @@
 
     applyVisibility();
     if (targetNodeId || sourceNodeId) {
-      navigateToNode(targetNodeId || sourceNodeId, edgeId, { preserveFilter: true });
+      navigateToNode(targetNodeId || sourceNodeId, edgeId);
     }
     cy.fit(visibleElements(), 35);
   }
@@ -944,6 +1099,33 @@
       graphIndex.parentsByClass.get(iri) || [],
       (item) => contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + parent ${item.classLabel}`),
       (item) => item.classLabel
+    );
+
+    appendClassMenuGroup(
+      menu,
+      "Restrictions",
+      [
+        ...(graphIndex.restrictionOutByClass.get(iri) || []).map((it) => ({
+          _kind: "out",
+          ...it,
+          menuLabel: `${it.label} ${it.quantifier} ${it.targetLabel}`
+        })),
+        ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({
+          _kind: "in",
+          ...it,
+          // For incoming: show source + property + quantifier
+          menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}`
+        }))
+      ],
+      (item) => {
+        if (item._kind === "out") {
+          contextNavigate(node.id(), iriToId(item.targetIri), item.edgeId, `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`);
+        } else {
+          // incoming: navigate to source class
+          contextNavigate(node.id(), iriToId(item.sourceIri), item.edgeId, `${label} + incoming restriction ${item.sourceLabel}`);
+        }
+      },
+      (item) => item.menuLabel
     );
 
     appendClassMenuGroup(
@@ -1180,13 +1362,17 @@
       const typeLabel =
         d.type === "subclass" ? "rdfs:subClassOf" :
         d.type === "objpropEdge" ? "Object property" :
+        d.type === "restrictionEdge" ? "OWL restriction" :
         d.type === "datapropEdge" ? "Data property domain link" :
         d.type === "individualType" ? "rdf:type (individual)" :
         "Edge";
 
+      const quantifier = d.type === "restrictionEdge" ? escapeHtml(d.quantifier || "") : "";
+
       ui.detailsContent.innerHTML = `
         <div><span class="k">Type:</span> ${typeLabel}</div>
         ${label ? `<div><span class="k">Label:</span> ${label}</div>` : ""}
+        ${quantifier ? `<div><span class="k">Quantifier:</span> ${quantifier}</div>` : ""}
         <div><span class="k">From:</span> ${source}</div>
         <div><span class="k">To:</span> ${target}</div>
         <div><span class="k">IRI:</span> <span class="iri">${iri}</span></div>
@@ -1234,6 +1420,7 @@
     const flags = [];
     flags.push(`Classes: ${stats.classes}`);
     flags.push(`SubClassOf: ${stats.subclassEdges}${ui.showSubclass.checked ? "" : " hidden"}`);
+    flags.push(`Restrictions: ${stats.restrictionEdges || 0}${ui.showRestrictions && !ui.showRestrictions.checked ? " hidden" : ""}`);
     flags.push(`ObjProp edges: ${stats.objectPropEdges}${ui.showObjectProperties.checked ? "" : " hidden"}`);
     flags.push(`DataProps: ${stats.dataPropNodes}${ui.showDataProperties.checked ? "" : " hidden"}`);
 
