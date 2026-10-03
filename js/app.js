@@ -209,27 +209,32 @@ function wireDocumentOutsideCloseHandler(){
 function wireContextMenuEventGuards(menu){
   // Allow clicks on buttons to propagate normally
   menu.addEventListener("click", (evt) => {
-    if (evt.target.tagName === "BUTTON") {
-      return; // Let button clicks through
-    }
+    if (evt.target.tagName === "BUTTON") return;
     evt.stopPropagation();
   }, { capture: true });
 
-  // Stop other pointer events to prevent closing the menu
+  // Only block pointerdown/up events that would interfere with the menu, not scrolling
   const stop = (evt) => {
-    evt.stopPropagation();
+    if (evt.type === "pointerdown" || evt.type === "pointerup" ||
+        evt.type === "mousedown" || evt.type === "mouseup" ||
+        evt.type === "dblclick" || evt.type === "touchstart" ||
+        evt.type === "touchend") {
+      evt.stopPropagation();
+    }
   };
 
   ["pointerdown","pointerup","mousedown","mouseup","dblclick","touchstart","touchend"].forEach((t) => {
     menu.addEventListener(t, stop, { capture: true });
   });
 
-  // Allow wheel to scroll; just stop propagation
+  // Allow native wheel scrolling in the menu
   menu.addEventListener("wheel", (evt) => {
-    evt.stopPropagation();
-  }, { capture: true, passive: true });
+    // Let the browser scroll the menu normally.
+    // If the menu is not scrollable, this falls through and page scroll can still happen
+    // when the mouse is not over the menu.
+  }, { passive: true });
 
-  // On right-click inside menu, don't bubble
+  // Prevent browser context menu inside menu
   menu.addEventListener("contextmenu", (evt) => {
     evt.preventDefault();
     evt.stopPropagation();
