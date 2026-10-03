@@ -19,7 +19,6 @@
 
   // focusSelection:
   //   null OR { nodeIds:Set<string>, edgeIds:Set<string>, label:string }
-  // Focus mode is applied LAST and hides everything except the focused elements.
   let focusSelection = null;
 
   let saveScheduled = false;
@@ -51,14 +50,14 @@
   // -------- graph index for context menu navigation --------
   function emptyGraphIndex(){
     return {
-      parentsByClass: new Map(),        // classIri -> [{classIri, classLabel, edgeId}]
-      childrenByClass: new Map(),       // classIri -> [{classIri, classLabel, edgeId}]
-      objectOutByClass: new Map(),      // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
-      objectInByClass: new Map(),       // classIri -> [{propIri, label, classIri, classLabel, edgeId}]
-      dataPropsByClass: new Map(),      // classIri -> [{propIri, label, nodeId, range, edgeId}]
-      individualsByClass: new Map(),    // classIri -> [{individualIri, label, nodeId, edgeId}]
-      restrictionOutByClass: new Map(), // classIri -> [{propIri,label,quantifier,targetIri,targetLabel,edgeId}]
-      restrictionInByClass: new Map()   // classIri -> [{propIri,label,quantifier,sourceIri,sourceLabel,edgeId}]
+      parentsByClass: new Map(),
+      childrenByClass: new Map(),
+      objectOutByClass: new Map(),
+      objectInByClass: new Map(),
+      dataPropsByClass: new Map(),
+      individualsByClass: new Map(),
+      restrictionOutByClass: new Map(),
+      restrictionInByClass: new Map()
     };
   }
 
@@ -102,7 +101,6 @@
   }
 
   function createRestrictionsToggleIfMissing(){
-    // If page already has it, use it. Otherwise add it to existing .toggles.
     let cb = document.getElementById("showRestrictions");
     if (!cb) {
       const toggles = document.querySelector(".toggles");
@@ -120,8 +118,6 @@
   function ensureRestrictionLegend(){
     const legend = document.querySelector(".legend");
     if (!legend) return;
-
-    // Avoid duplicates
     if (legend.querySelector('[data-legend="restriction"]')) return;
 
     const row = document.createElement("div");
@@ -129,7 +125,6 @@
 
     const sw = document.createElement("span");
     sw.className = "swatch restriction";
-    // inline fallback styling (in case CSS isn't updated)
     sw.style.display = "inline-block";
     sw.style.width = "14px";
     sw.style.height = "14px";
@@ -144,11 +139,12 @@
     legend.appendChild(row);
   }
 
+  // -------- context menu creation & robust event handling --------
   function createContextMenu(){
     if (document.getElementById("cyContextMenu")) {
       ui.contextMenu = document.getElementById("cyContextMenu");
-      // even if already exists, still apply propagation fixes:
       wireContextMenuEventGuards(ui.contextMenu);
+      wireDocumentOutsideCloseHandler();
       return;
     }
 
@@ -161,6 +157,8 @@
     menu.style.maxWidth = "420px";
     menu.style.maxHeight = "70vh";
     menu.style.overflowY = "auto";
+    menu.style.overscrollBehavior = "contain";
+    menu.style.pointerEvents = "auto";
     menu.style.padding = "0.5rem";
     menu.style.background = "#ffffff";
     menu.style.color = "#222222";
@@ -173,57 +171,61 @@
     document.body.appendChild(menu);
     ui.contextMenu = menu;
 
-    // Fix: prevent clicks/drags/wheel on the menu/scrollbar from closing it.
     wireContextMenuEventGuards(menu);
-
-    // Close only when click happens outside menu
-    document.addEventListener("pointerdown", (evt) => {
-      if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
-      if (eventPathIncludes(evt, ui.contextMenu)) return;
-      hideContextMenu();
-    }, { capture: true });
-
-    // Prevent browser context menu if user right-clicks inside the menu
-    document.addEventListener("contextmenu", (evt) => {
-      if (ui.contextMenu && eventPathIncludes(evt, ui.contextMenu)) {
-        evt.preventDefault();
-      }
-    });
+    wireDocumentOutsideCloseHandler();
 
     window.addEventListener("resize", hideContextMenu);
-    // Keep previous behavior: scrolling outer page hides the menu
     window.addEventListener("scroll", hideContextMenu, true);
   }
 
+  function eventInsideContextMenu(evt){
+    if (!ui.contextMenu) return false;
+    if (typeof evt.composedPath === "function") {
+      const path = evt.composedPath();
+      if (Array.isArray(path) && path.includes(ui.contextMenu)) return true;
+    }
+    return ui.contextMenu.contains(evt.target);
+  }
+
+  function wireDocumentOutsideCloseHandler(){
+    if (ui._outsideCloseWired) return;
+    ui._outsideCloseWired = true;
+
+    // Use pointerdown in capture phase. Do not use click (click can be disrupted by scrollbar).
+    document.addEventListener("pointerdown", (evt) => {
+      if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
+      if (eventInsideContextMenu(evt)) return;
+      hideContextMenu();
+    }, true);
+
+    // Prevent browser menu when right-click inside our menu
+    document.addEventListener("contextmenu", (evt) => {
+      if (ui.contextMenu && ui.contextMenu.style.display !== "none" && eventInsideContextMenu(evt)) {
+        evt.preventDefault();
+      }
+    }, true);
+  }
+
   function wireContextMenuEventGuards(menu){
-    const stop = (evt) => {
-      // Do NOT preventDefault for wheel or scroll; we want native scrolling.
+    // Stop propagation so outside handlers don't close the menu.
+    // IMPORTANT: do NOT preventDefault for clicks/scroll so buttons & scrollbar work.
+    const stopInsideMenu = (evt) => {
       evt.stopPropagation();
     };
 
-    // These events commonly fire when clicking/dragging the scrollbar.
-    ["pointerdown","pointerup","mousedown","mouseup","click","dblclick","touchstart","touchend"].forEach((t) => {
-      menu.addEventListener(t, stop, { capture: true });
+    ["pointerdown","mousedown","mouseup","click","dblclick","touchstart","touchend"].forEach((type) => {
+      menu.addEventListener(type, stopInsideMenu, true);
     });
 
-    // Allow wheel to scroll; just stop propagation so outside listeners don't react.
     menu.addEventListener("wheel", (evt) => {
       evt.stopPropagation();
+      // no preventDefault => native scroll works
     }, { capture: true, passive: true });
 
-    // On right-click inside menu, don't bubble.
     menu.addEventListener("contextmenu", (evt) => {
-      evt.preventDefault();
       evt.stopPropagation();
-    }, { capture: true });
-  }
-
-  function eventPathIncludes(evt, element){
-    if (!element) return false;
-    const path = (typeof evt.composedPath === "function") ? evt.composedPath() : null;
-    if (path && Array.isArray(path)) return path.includes(element);
-    // fallback
-    return element.contains(evt.target);
+      evt.preventDefault();
+    }, true);
   }
 
   // -------- cytoscape init --------
@@ -251,10 +253,7 @@
         },
         {
           selector: "node[type='dataprop']",
-          style: {
-            "shape": "diamond",
-            "text-max-width": 130
-          }
+          style: { "shape": "diamond", "text-max-width": 130 }
         },
         {
           selector: "node[type='individual']",
@@ -309,9 +308,7 @@
       if (evt.target === cy) hideContextMenu();
     });
 
-    cy.on("dragfree", "node", () => {
-      scheduleSavePositions();
-    });
+    cy.on("dragfree", "node", () => scheduleSavePositions());
   }
 
   // -------- UI wiring --------
@@ -324,9 +321,7 @@
     });
 
     ui.searchButton.addEventListener("click", () => performSearch());
-    ui.searchBox.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") performSearch();
-    });
+    ui.searchBox.addEventListener("keydown", (e) => { if (e.key === "Enter") performSearch(); });
 
     if (ui.classFilterBox) {
       ui.classFilterBox.addEventListener("input", () => applyVisibility());
@@ -340,7 +335,6 @@
 
     if (ui.clearClassFilterButton) {
       ui.clearClassFilterButton.addEventListener("click", () => {
-        // Clear ONLY the class filter, not focus mode
         ui.classFilterBox.value = "";
         applyVisibility();
         cy.fit(visibleElements(), 30);
@@ -363,12 +357,10 @@
     ui.showDataProperties.addEventListener("change", onToggle);
     if (ui.showRestrictions) ui.showRestrictions.addEventListener("change", onToggle);
 
-    window.addEventListener("resize", () => {
-      if (cy) cy.resize();
-    });
+    window.addEventListener("resize", () => { if (cy) cy.resize(); });
   }
 
-  // -------- IMPORTANT: preserve original catalog.json dropdown logic --------
+  // -------- catalog --------
   async function loadCatalog(){
     try{
       updateStatus("Loading catalog.json…");
@@ -443,7 +435,7 @@
     return await res.text();
   }
 
-  // -------- parsing/building --------
+  // -------- build graph from Turtle --------
   function buildGraphFromTurtle(ttlText){
     const parser = new N3.Parser({ format: "text/turtle" });
     const store = new N3.Store();
@@ -474,8 +466,8 @@
     const objectProps = new Set();
     const dataProps = new Set();
 
-    const domains = new Map(); // prop -> [term]
-    const ranges  = new Map(); // prop -> [term]
+    const domains = new Map();
+    const ranges  = new Map();
 
     const index = emptyGraphIndex();
 
@@ -510,6 +502,7 @@
       }
     }
 
+    // Individuals by class
     const individualsByClass = new Map();
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== rdfType.value) continue;
@@ -528,8 +521,9 @@
 
     const elements = [];
     const nodeIds = new Set();
-    const edgeIds = new Set(); // to avoid dupes
+    const edgeIds = new Set();
 
+    // class nodes
     for (const iri of classes){
       const id = iriToId(iri);
       nodeIds.add(id);
@@ -546,7 +540,7 @@
       });
     }
 
-    // object property edges
+    // object properties edges
     let objEdgeCount = 0;
     for (const propIri of objectProps){
       const domainTerms = domains.get(propIri) || [];
@@ -580,27 +574,15 @@
             classes: "rel-objprop"
           });
 
-          addToMapArray(index.objectOutByClass, dIri, {
-            propIri,
-            label: propLabel,
-            classIri: rIri,
-            classLabel: labels.get(rIri) || compactIri(rIri),
-            edgeId: eid
-          });
-          addToMapArray(index.objectInByClass, rIri, {
-            propIri,
-            label: propLabel,
-            classIri: dIri,
-            classLabel: labels.get(dIri) || compactIri(dIri),
-            edgeId: eid
-          });
+          addToMapArray(index.objectOutByClass, dIri, { propIri, label: propLabel, classIri: rIri, classLabel: labels.get(rIri) || compactIri(rIri), edgeId: eid });
+          addToMapArray(index.objectInByClass, rIri, { propIri, label: propLabel, classIri: dIri, classLabel: labels.get(dIri) || compactIri(dIri), edgeId: eid });
 
           objEdgeCount++;
         }
       }
     }
 
-    // data properties: nodes + edges from domain class -> prop node
+    // data properties: nodes + edges
     let dataNodeCount = 0;
     let dataEdgeCount = 0;
 
@@ -656,24 +638,16 @@
           classes: "rel-dataprop"
         });
 
-        addToMapArray(index.dataPropsByClass, dIri, {
-          propIri,
-          label: baseLabel,
-          nodeId: propNodeId,
-          range: rangeStr,
-          edgeId: eid
-        });
-
+        addToMapArray(index.dataPropsByClass, dIri, { propIri, label: baseLabel, nodeId: propNodeId, range: rangeStr, edgeId: eid });
         dataEdgeCount++;
       }
     }
 
-    // direct asserted subclass edges (named -> named)
+    // direct subclass edges (named-named)
     let subclassCount = 0;
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
-      if (q.subject.termType !== "NamedNode") continue;
-      if (q.object.termType !== "NamedNode") continue;
+      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
 
       const child = q.subject.value;
       const parent = q.object.value;
@@ -697,24 +671,13 @@
         classes: "rel-subclass"
       });
 
-      addToMapArray(index.parentsByClass, child, {
-        classIri: parent,
-        classLabel: labels.get(parent) || compactIri(parent),
-        edgeId: eid
-      });
-      addToMapArray(index.childrenByClass, parent, {
-        classIri: child,
-        classLabel: labels.get(child) || compactIri(child),
-        edgeId: eid
-      });
-
+      addToMapArray(index.parentsByClass, child, { classIri: parent, classLabel: labels.get(parent) || compactIri(parent), edgeId: eid });
+      addToMapArray(index.childrenByClass, parent, { classIri: child, classLabel: labels.get(child) || compactIri(child), edgeId: eid });
       subclassCount++;
     }
 
-    // OWL subclass restrictions edges: rdfs:subClassOf _:bnode restriction
+    // restriction edges
     let restrictionEdgeCount = 0;
-
-    // Gather candidate restrictions from subclass bnodes
     const restrictionCandidates = [];
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
@@ -745,7 +708,6 @@
       else if (hv.length) { quantifier = "value"; filler = hv[0]; }
       if (!quantifier || !filler) continue;
 
-      // Conservative: only edges to named class nodes already in classes set
       if (filler.termType !== "NamedNode") continue;
       const targetIri = filler.value;
       if (!classes.has(targetIri)) continue;
@@ -755,7 +717,6 @@
       const targetLabel = labels.get(targetIri) || compactIri(targetIri);
 
       const edgeLabel = `${propLabel} ${quantifier}`;
-
       const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(targetIri)}`;
       const eid = dedupeEdgeId(eidBase, edgeIds);
 
@@ -774,28 +735,13 @@
         classes: "rel-restriction"
       });
 
-      addToMapArray(index.restrictionOutByClass, classIri, {
-        propIri,
-        label: propLabel,
-        quantifier,
-        targetIri,
-        targetLabel,
-        edgeId: eid
-      });
-
-      addToMapArray(index.restrictionInByClass, targetIri, {
-        propIri,
-        label: propLabel,
-        quantifier,
-        sourceIri: classIri,
-        sourceLabel: labels.get(classIri) || compactIri(classIri),
-        edgeId: eid
-      });
+      addToMapArray(index.restrictionOutByClass, classIri, { propIri, label: propLabel, quantifier, targetIri, targetLabel, edgeId: eid });
+      addToMapArray(index.restrictionInByClass, targetIri, { propIri, label: propLabel, quantifier, sourceIri: classIri, sourceLabel: labels.get(classIri) || compactIri(classIri), edgeId: eid });
 
       restrictionEdgeCount++;
     }
 
-    // individuals as context-only nodes/edges
+    // individuals (context only)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
 
@@ -839,16 +785,11 @@
           individualEdgeCount++;
         }
 
-        addToMapArray(index.individualsByClass, classIri, {
-          individualIri,
-          label: labels.get(individualIri) || compactIri(individualIri),
-          nodeId,
-          edgeId
-        });
+        addToMapArray(index.individualsByClass, classIri, { individualIri, label: labels.get(individualIri) || compactIri(individualIri), nodeId, edgeId });
       }
     }
 
-    // size heuristic for class nodes
+    // node size heuristic
     const degreeMap = new Map();
     for (const el of elements){
       if (el.data && el.data.source && el.data.target){
@@ -892,12 +833,11 @@
     return eid;
   }
 
-  // -------- visibility: toggles + filtering + focus --------
+  // -------- visibility --------
   function applyVisibility(){
     if (!cy) return;
 
     cy.elements().removeClass("hidden filterHidden focusHidden");
-
     cy.elements(".contextOnly").addClass("hidden");
 
     cy.edges(".rel-subclass").toggleClass("hidden", !ui.showSubclass.checked);
@@ -915,7 +855,6 @@
 
   function applyClassFilter(){
     if (!cy || !ui.classFilterBox) return;
-
     const q = (ui.classFilterBox.value || "").trim().toLowerCase();
     if (!q) return;
 
@@ -923,11 +862,7 @@
 
     cy.nodes("[type='class']").forEach((node) => {
       const d = node.data();
-      const haystack = [d.label, d.labelFull, d.iri, d.comment]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
+      const haystack = [d.label, d.labelFull, d.iri, d.comment].filter(Boolean).join(" ").toLowerCase();
       if (!haystack.includes(q)) {
         node.addClass("filterHidden");
         hiddenClassIds.add(node.id());
@@ -946,16 +881,12 @@
     });
 
     cy.nodes("[type='dataprop']").forEach((node) => {
-      const connectedVisible = node.connectedEdges(".rel-dataprop").filter((edge) => {
-        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
-      });
+      const connectedVisible = node.connectedEdges(".rel-dataprop").filter((edge) => !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden"));
       if (!connectedVisible.length) node.addClass("filterHidden");
     });
 
     cy.nodes("[type='individual']").forEach((node) => {
-      const connectedVisible = node.connectedEdges(".rel-individual").filter((edge) => {
-        return !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden");
-      });
+      const connectedVisible = node.connectedEdges(".rel-individual").filter((edge) => !edge.hasClass("hidden") && !edge.hasClass("filterHidden") && !edge.hasClass("focusHidden"));
       if (!connectedVisible.length) node.addClass("filterHidden");
     });
   }
@@ -975,11 +906,8 @@
     }
 
     cy.nodes().forEach((node) => {
-      if (allowedNodeIds.has(node.id())) {
-        node.removeClass("hidden filterHidden focusHidden contextOnly");
-      } else {
-        node.addClass("focusHidden");
-      }
+      if (allowedNodeIds.has(node.id())) node.removeClass("hidden filterHidden focusHidden contextOnly");
+      else node.addClass("focusHidden");
     });
 
     cy.edges().forEach((edge) => {
@@ -994,7 +922,6 @@
   }
 
   function setFocusSelection(nodeIds, edgeIds, label){
-    // Replacement action
     focusSelection = {
       nodeIds: new Set(nodeIds || []),
       edgeIds: new Set(edgeIds || []),
@@ -1010,9 +937,6 @@
     cy.fit(visibleElements(), 35);
   }
 
-  // ADDITIVE focus navigation:
-  // - if focusSelection exists: add to it
-  // - else: initialize from currently visible elements and add to it
   function contextNavigate(sourceNodeId, targetNodeId, edgeId, label){
     if (!cy) return;
 
@@ -1023,11 +947,7 @@
       for (const id of focusSelection.nodeIds || []) nodeIds.add(id);
       for (const id of focusSelection.edgeIds || []) edgeIds.add(id);
     } else {
-      // initialize from what is currently visible BEFORE any new focus is applied
-      cy.nodes().not(".hidden").not(".filterHidden").not(".focusHidden").forEach((node) => {
-        nodeIds.add(node.id());
-      });
-
+      cy.nodes().not(".hidden").not(".filterHidden").not(".focusHidden").forEach((node) => nodeIds.add(node.id()));
       cy.edges().not(".hidden").not(".filterHidden").not(".focusHidden").forEach((edge) => {
         edgeIds.add(edge.id());
         nodeIds.add(edge.source().id());
@@ -1115,7 +1035,6 @@
     title.textContent = label;
     menu.appendChild(title);
 
-    // Focus controls
     const focusBar = document.createElement("div");
     focusBar.style.display = "flex";
     focusBar.style.gap = "8px";
@@ -1124,7 +1043,8 @@
     focusBar.style.marginBottom = "0.35rem";
     focusBar.style.flexWrap = "wrap";
 
-    const showOnlyBtn = makeMenuPillButton("Show only this class", () => {
+    const showOnlyBtn = makeMenuPillButton("Show only this class", (evt) => {
+      evt.stopPropagation();
       hideContextMenu();
       setFocusSelection([node.id()], [], `Only ${label}`);
       cy.elements().removeClass("selected");
@@ -1134,7 +1054,8 @@
     focusBar.appendChild(showOnlyBtn);
 
     if (focusSelection) {
-      const clearFocusBtn = makeMenuPillButton("Clear focus filter", () => {
+      const clearFocusBtn = makeMenuPillButton("Clear focus filter", (evt) => {
+        evt.stopPropagation();
         hideContextMenu();
         clearFocusSelection();
       });
@@ -1144,50 +1065,32 @@
     menu.appendChild(focusBar);
 
     appendClassMenuGroup(
-      menu,
-      "Children",
-      graphIndex.childrenByClass.get(iri) || [],
+      menu, "Children", graphIndex.childrenByClass.get(iri) || [],
       (item) => contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + child ${item.classLabel}`),
       (item) => item.classLabel
     );
 
     appendClassMenuGroup(
-      menu,
-      "Parents",
-      graphIndex.parentsByClass.get(iri) || [],
+      menu, "Parents", graphIndex.parentsByClass.get(iri) || [],
       (item) => contextNavigate(node.id(), iriToId(item.classIri), item.edgeId, `${label} + parent ${item.classLabel}`),
       (item) => item.classLabel
     );
 
     appendClassMenuGroup(
-      menu,
-      "Restrictions",
+      menu, "Restrictions",
       [
-        ...(graphIndex.restrictionOutByClass.get(iri) || []).map((it) => ({
-          _kind: "out",
-          ...it,
-          menuLabel: `${it.label} ${it.quantifier} ${it.targetLabel}`
-        })),
-        ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({
-          _kind: "in",
-          ...it,
-          menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}`
-        }))
+        ...(graphIndex.restrictionOutByClass.get(iri) || []).map((it) => ({ _kind: "out", ...it, menuLabel: `${it.label} ${it.quantifier} ${it.targetLabel}` })),
+        ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({ _kind: "in", ...it, menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}` }))
       ],
       (item) => {
-        if (item._kind === "out") {
-          contextNavigate(node.id(), iriToId(item.targetIri), item.edgeId, `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`);
-        } else {
-          contextNavigate(node.id(), iriToId(item.sourceIri), item.edgeId, `${label} + incoming restriction ${item.sourceLabel}`);
-        }
+        if (item._kind === "out") contextNavigate(node.id(), iriToId(item.targetIri), item.edgeId, `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`);
+        else contextNavigate(node.id(), iriToId(item.sourceIri), item.edgeId, `${label} + incoming restriction ${item.sourceLabel}`);
       },
       (item) => item.menuLabel
     );
 
     appendClassMenuGroup(
-      menu,
-      "Data properties",
-      graphIndex.dataPropsByClass.get(iri) || [],
+      menu, "Data properties", graphIndex.dataPropsByClass.get(iri) || [],
       (item) => {
         if (ui.showDataProperties && !ui.showDataProperties.checked) {
           ui.showDataProperties.checked = true;
@@ -1199,20 +1102,12 @@
     );
 
     const objectItems = [
-      ...(graphIndex.objectOutByClass.get(iri) || []).map((item) => ({
-        ...item,
-        menuLabel: `${item.label} → ${item.classLabel}`
-      })),
-      ...(graphIndex.objectInByClass.get(iri) || []).map((item) => ({
-        ...item,
-        menuLabel: `${item.classLabel} → ${item.label}`
-      }))
+      ...(graphIndex.objectOutByClass.get(iri) || []).map((item) => ({ ...item, menuLabel: `${item.label} → ${item.classLabel}` })),
+      ...(graphIndex.objectInByClass.get(iri) || []).map((item) => ({ ...item, menuLabel: `${item.classLabel} → ${item.label}` }))
     ];
 
     appendClassMenuGroup(
-      menu,
-      "Object properties",
-      objectItems,
+      menu, "Object properties", objectItems,
       (item) => {
         if (ui.showObjectProperties && !ui.showObjectProperties.checked) {
           ui.showObjectProperties.checked = true;
@@ -1224,9 +1119,7 @@
     );
 
     appendClassMenuGroup(
-      menu,
-      "Individuals",
-      graphIndex.individualsByClass.get(iri) || [],
+      menu, "Individuals", graphIndex.individualsByClass.get(iri) || [],
       (item) => {
         revealContextElement(item.nodeId, item.edgeId);
         contextNavigate(node.id(), item.nodeId, item.edgeId, `${label} + individual ${item.label}`);
@@ -1252,10 +1145,7 @@
     b.style.cursor = "pointer";
     b.style.fontSize = "0.82rem";
     b.style.color = "#1f3b57";
-    b.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      onClick();
-    });
+    b.addEventListener("click", onClick);
     return b;
   }
 
@@ -1349,7 +1239,7 @@
     if (edge && edge.length) edge.removeClass("contextOnly hidden filterHidden focusHidden");
   }
 
-  // -------- navigation (no ontology reload, no filter overwrite) --------
+  // -------- navigation --------
   function navigateToNode(nodeId, edgeId){
     const node = cy.getElementById(nodeId);
     if (!node || !node.length) {
@@ -1373,10 +1263,7 @@
     node.addClass("selected");
     showDetails(node);
 
-    cy.animate({
-      center: { eles: node },
-      zoom: Math.max(0.75, Math.min(1.3, cy.zoom()))
-    }, { duration: 350 });
+    cy.animate({ center: { eles: node }, zoom: Math.max(0.75, Math.min(1.3, cy.zoom())) }, { duration: 350 });
   }
 
   // -------- details panel --------
@@ -1480,12 +1367,10 @@
     flags.push(`DataProps: ${stats.dataPropNodes}${ui.showDataProperties.checked ? "" : " hidden"}`);
 
     if (typeof stats.individuals === "number") flags.push(`Individuals: ${stats.individuals}`);
-
     if (ui.classFilterBox && ui.classFilterBox.value.trim()) {
       const visibleClasses = cy.nodes("[type='class']").filter(n => !n.hasClass("hidden") && !n.hasClass("filterHidden") && !n.hasClass("focusHidden")).length;
       flags.push(`Visible classes: ${visibleClasses}`);
     }
-
     if (focusSelection) flags.push(`Focus: ${focusSelection.label || "active"}`);
 
     return flags.join(" • ");
@@ -1495,7 +1380,7 @@
     ui.statusText.textContent = text;
   }
 
-  // -------- localStorage positions (per ontology) --------
+  // -------- localStorage positions --------
   function storageKey(ontologyFile){
     return `ontologyViewer.positions::${ontologyFile}`;
   }
