@@ -786,7 +786,7 @@ function wireContextMenuEventGuards(menu){
               type: "individualType",
               label: "type",
               comment: "",
-              color: "rgba(164,130,230,.75)"
+              color: "rgba(157,95,199,.65)"
             },
             classes: "rel-individual contextOnly"
           });
