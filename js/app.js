@@ -206,28 +206,36 @@
     }, true);
   }
 
-  function wireContextMenuEventGuards(menu){
-    // Stop propagation so outside handlers don't close the menu.
-    // IMPORTANT: do NOT preventDefault for clicks/scroll so buttons & scrollbar work.
-    const stopInsideMenu = (evt) => {
-      evt.stopPropagation();
-    };
+function wireContextMenuEventGuards(menu){
+  // Allow clicks on buttons to propagate normally
+  menu.addEventListener("click", (evt) => {
+    if (evt.target.tagName === "BUTTON") {
+      return; // Let button clicks through
+    }
+    evt.stopPropagation();
+  }, { capture: true });
 
-    ["pointerdown","mousedown","mouseup","click","dblclick","touchstart","touchend"].forEach((type) => {
-      menu.addEventListener(type, stopInsideMenu, true);
-    });
+  // Stop other pointer events to prevent closing the menu
+  const stop = (evt) => {
+    evt.stopPropagation();
+  };
 
-    menu.addEventListener("wheel", (evt) => {
-      evt.stopPropagation();
-      // no preventDefault => native scroll works
-    }, { capture: true, passive: true });
+  ["pointerdown","pointerup","mousedown","mouseup","dblclick","touchstart","touchend"].forEach((t) => {
+    menu.addEventListener(t, stop, { capture: true });
+  });
 
-    menu.addEventListener("contextmenu", (evt) => {
-      evt.stopPropagation();
-      evt.preventDefault();
-    }, true);
-  }
+  // Allow wheel to scroll; just stop propagation
+  menu.addEventListener("wheel", (evt) => {
+    evt.stopPropagation();
+  }, { capture: true, passive: true });
 
+  // On right-click inside menu, don't bubble
+  menu.addEventListener("contextmenu", (evt) => {
+    evt.preventDefault();
+    evt.stopPropagation();
+  }, { capture: true });
+}
+  
   // -------- cytoscape init --------
   function initCy(){
     cy = cytoscape({
