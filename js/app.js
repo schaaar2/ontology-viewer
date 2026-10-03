@@ -338,7 +338,7 @@ function wireContextMenuEventGuards(menu){
           selector: "node[type='individual']",
           style: {
             "shape": "round-rectangle",
-            "background-color": "rgba(204,178,255,.7)",
+            "background-color": "rgba(125,76,158,.65)",
             "text-max-width": 140
           }
         },
