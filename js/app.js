@@ -534,7 +534,7 @@
           type: "class",
           label: labels.get(iri) || compactIri(iri),
           comment: comments.get(iri) || "",
-          color: "rgba(132,210,255,.55)",
+          color: "rgba(80,88,105,.90)",
           size: 22
         }
       });
@@ -613,7 +613,7 @@
               labelFull: label,
               range: rangeStr,
               comment: comments.get(propIri) || "",
-              color: "rgba(184,255,177,.55)",
+              color: "rgba(70,135,65,.90)",
               size: 16
             }
           });
