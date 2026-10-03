@@ -62,12 +62,13 @@
   }
 
   // -------- dynamic UI (class filter + context menu container + restrictions toggle + legend) --------
-  function createDynamicUi(){
-    createClassFilterControl();
-    createContextMenu();
-    createRestrictionsToggleIfMissing();
-    ensureRestrictionLegend();
-  }
+function createDynamicUi(){
+  createClassFilterControl();
+  createContextMenu();
+  createRestrictionsToggleIfMissing();
+  ensureRestrictionLegend();
+  ensureIndividualLegend();
+}
 
   function createClassFilterControl(){
     if (document.getElementById("classFilterBox")) {
@@ -139,6 +140,30 @@
     legend.appendChild(row);
   }
 
+  function ensureIndividualLegend(){
+  const legend = document.querySelector(".legend");
+  if (!legend) return;
+  if (legend.querySelector('[data-legend="individual"]')) return;
+
+  const row = document.createElement("div");
+  row.dataset.legend = "individual";
+
+  const sw = document.createElement("span");
+  sw.className = "swatch individual";
+  sw.style.display = "inline-block";
+  sw.style.width = "14px";
+  sw.style.height = "14px";
+  sw.style.borderRadius = "4px";
+  sw.style.marginRight = "8px";
+  sw.style.border = "1px solid rgba(0,0,0,.15)";
+  sw.style.verticalAlign = "-2px";
+  sw.style.background = "rgba(204,178,255,.7)";
+
+  row.appendChild(sw);
+  row.appendChild(document.createTextNode(" Individual"));
+  legend.appendChild(row);
+}
+
   // -------- context menu creation & robust event handling --------
   function createContextMenu(){
     if (document.getElementById("cyContextMenu")) {
@@ -175,17 +200,51 @@
     wireDocumentOutsideCloseHandler();
 
     window.addEventListener("resize", hideContextMenu);
-    window.addEventListener("scroll", hideContextMenu, true);
+    window.addEventListener("scroll", handleContextMenuOuterScroll, true);
   }
 
-  function eventInsideContextMenu(evt){
-    if (!ui.contextMenu) return false;
-    if (typeof evt.composedPath === "function") {
-      const path = evt.composedPath();
-      if (Array.isArray(path) && path.includes(ui.contextMenu)) return true;
-    }
-    return ui.contextMenu.contains(evt.target);
+function eventInsideContextMenu(evt){
+  if (!ui.contextMenu) return false;
+
+  if (typeof evt.composedPath === "function") {
+    const path = evt.composedPath();
+    if (Array.isArray(path) && path.includes(ui.contextMenu)) return true;
   }
+
+  if (ui.contextMenu.contains(evt.target)) return true;
+
+  // Important for native scrollbar interactions.
+  // In some browsers, clicking or dragging the scrollbar does not report
+  // the menu as the event target, so also check pointer coordinates.
+  if (
+    typeof evt.clientX === "number" &&
+    typeof evt.clientY === "number" &&
+    ui.contextMenu.style.display !== "none"
+  ) {
+    const rect = ui.contextMenu.getBoundingClientRect();
+
+    return (
+      evt.clientX >= rect.left &&
+      evt.clientX <= rect.right &&
+      evt.clientY >= rect.top &&
+      evt.clientY <= rect.bottom
+    );
+  }
+
+  return false;
+}
+
+function handleContextMenuOuterScroll(evt){
+  if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
+
+  // If the scroll event comes from the context menu itself, keep it open.
+  if (evt.target === ui.contextMenu || ui.contextMenu.contains(evt.target)) {
+    return;
+  }
+
+  // Otherwise, scrolling the outer page can close the menu.
+  hideContextMenu();
+}
 
 function wireDocumentOutsideCloseHandler(){
   if (ui._outsideCloseWired) return;
@@ -207,38 +266,45 @@ function wireDocumentOutsideCloseHandler(){
 }
   
 function wireContextMenuEventGuards(menu){
-  // Allow clicks on buttons to propagate normally
-  menu.addEventListener("click", (evt) => {
-    if (evt.target.tagName === "BUTTON") return;
-    evt.stopPropagation();
-  }, { capture: true });
+  if (menu._contextMenuGuardsWired) return;
+  menu._contextMenuGuardsWired = true;
 
-  // Only block pointerdown/up events that would interfere with the menu, not scrolling
-  const stop = (evt) => {
-    if (evt.type === "pointerdown" || evt.type === "pointerup" ||
-        evt.type === "mousedown" || evt.type === "mouseup" ||
-        evt.type === "dblclick" || evt.type === "touchstart" ||
-        evt.type === "touchend") {
-      evt.stopPropagation();
-    }
+  // Do not use capture phase here.
+  // Capture-phase stopPropagation can prevent menu button clicks from firing.
+  const stopOnly = (evt) => {
+    evt.stopPropagation();
   };
 
-  ["pointerdown","pointerup","mousedown","mouseup","dblclick","touchstart","touchend"].forEach((t) => {
-    menu.addEventListener(t, stop, { capture: true });
+  [
+    "pointerdown",
+    "pointerup",
+    "mousedown",
+    "mouseup",
+    "click",
+    "dblclick",
+    "touchstart",
+    "touchend"
+  ].forEach((type) => {
+    menu.addEventListener(type, stopOnly);
   });
 
-  // Allow native wheel scrolling in the menu
+  // Allow native wheel and trackpad scrolling inside the menu.
+  // Stop propagation so Cytoscape and the page do not handle the wheel event.
+  // Do not call preventDefault.
   menu.addEventListener("wheel", (evt) => {
-    // Let the browser scroll the menu normally.
-    // If the menu is not scrollable, this falls through and page scroll can still happen
-    // when the mouse is not over the menu.
+    evt.stopPropagation();
   }, { passive: true });
 
-  // Prevent browser context menu inside menu
+  // Allow the menu itself to scroll without closing.
+  menu.addEventListener("scroll", (evt) => {
+    evt.stopPropagation();
+  });
+
+  // Prevent the browser context menu inside the custom menu.
   menu.addEventListener("contextmenu", (evt) => {
     evt.preventDefault();
     evt.stopPropagation();
-  }, { capture: true });
+  });
 }
   
   // -------- cytoscape init --------
