@@ -838,7 +838,7 @@ function wireContextMenuEventGuards(menu){
               type: "individual",
               label: labels.get(individualIri) || compactIri(individualIri),
               comment: comments.get(individualIri) || "",
-              color: "rgba(157,95,199,.65)",
+              color: "rgba(100,60,130,.65)",
               size: 16
             },
             classes: "contextOnly"
