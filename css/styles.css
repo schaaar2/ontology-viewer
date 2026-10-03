@@ -10,6 +10,7 @@
   --class: #343d55;
   --objprop: #ffd479;
   --dataprop: #b8ffb1;
+  --individual: #9d5fc7;
 
   --subclassEdge: #8aa2ff;
   --objEdge: #ffd479;
@@ -196,6 +197,7 @@ button:hover{ border-color: rgba(255,255,255,.25); }
 .swatch.dataprop{ background: rgba(184,255,177,.55); }
 .swatch.subclass{ background: rgba(138,162,255,.55); }
 .swatch.restriction{ background: rgba(255,157,122,.85); }
+.swatch.individual{ background: rgba(157,95,199,.65); }
 
 .footer{
   padding: 10px 14px;
