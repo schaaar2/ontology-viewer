@@ -187,25 +187,25 @@
     return ui.contextMenu.contains(evt.target);
   }
 
-  function wireDocumentOutsideCloseHandler(){
-    if (ui._outsideCloseWired) return;
-    ui._outsideCloseWired = true;
+function wireDocumentOutsideCloseHandler(){
+  if (ui._outsideCloseWired) return;
+  ui._outsideCloseWired = true;
 
-    // Use pointerdown in capture phase. Do not use click (click can be disrupted by scrollbar).
-    document.addEventListener("pointerdown", (evt) => {
-      if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
-      if (eventInsideContextMenu(evt)) return;
-      hideContextMenu();
-    }, true);
+  // Use pointerdown in capture phase. Do not use click (click can be disrupted by scrollbar).
+  document.addEventListener("pointerdown", (evt) => {
+    if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
+    if (eventInsideContextMenu(evt)) return;
+    hideContextMenu();
+  }, true);
 
-    // Prevent browser menu when right-click inside our menu
-    document.addEventListener("contextmenu", (evt) => {
-      if (ui.contextMenu && ui.contextMenu.style.display !== "none" && eventInsideContextMenu(evt)) {
-        evt.preventDefault();
-      }
-    }, true);
-  }
-
+  // Prevent browser menu when right-click inside our menu
+  document.addEventListener("contextmenu", (evt) => {
+    if (ui.contextMenu && ui.contextMenu.style.display !== "none" && eventInsideContextMenu(evt)) {
+      evt.preventDefault();
+    }
+  }, true);
+}
+  
 function wireContextMenuEventGuards(menu){
   // Allow clicks on buttons to propagate normally
   menu.addEventListener("click", (evt) => {
