@@ -6,6 +6,9 @@
   const OWL  = "http://www.w3.org/2002/07/owl#";
   const XSD  = "http://www.w3.org/2001/XMLSchema#";
 
+  // -------- constants --------
+  const RESTRICTION_EDGE_COLOR = "rgba(255,157,122,.85)";
+
   // -------- state --------
   const ui = {};
   let cy = null;
@@ -59,11 +62,12 @@
     };
   }
 
-  // -------- dynamic UI (class filter + context menu container + restrictions toggle) --------
+  // -------- dynamic UI (class filter + context menu container + restrictions toggle + legend) --------
   function createDynamicUi(){
     createClassFilterControl();
     createContextMenu();
     createRestrictionsToggleIfMissing();
+    ensureRestrictionLegend();
   }
 
   function createClassFilterControl(){
@@ -113,9 +117,38 @@
     ui.showRestrictions = cb;
   }
 
+  function ensureRestrictionLegend(){
+    const legend = document.querySelector(".legend");
+    if (!legend) return;
+
+    // Avoid duplicates
+    if (legend.querySelector('[data-legend="restriction"]')) return;
+
+    const row = document.createElement("div");
+    row.dataset.legend = "restriction";
+
+    const sw = document.createElement("span");
+    sw.className = "swatch restriction";
+    // inline fallback styling (in case CSS isn't updated)
+    sw.style.display = "inline-block";
+    sw.style.width = "14px";
+    sw.style.height = "14px";
+    sw.style.borderRadius = "4px";
+    sw.style.marginRight = "8px";
+    sw.style.border = "1px solid rgba(0,0,0,.15)";
+    sw.style.verticalAlign = "-2px";
+    sw.style.background = RESTRICTION_EDGE_COLOR;
+
+    row.appendChild(sw);
+    row.appendChild(document.createTextNode(" OWL restriction"));
+    legend.appendChild(row);
+  }
+
   function createContextMenu(){
     if (document.getElementById("cyContextMenu")) {
       ui.contextMenu = document.getElementById("cyContextMenu");
+      // even if already exists, still apply propagation fixes:
+      wireContextMenuEventGuards(ui.contextMenu);
       return;
     }
 
@@ -140,18 +173,57 @@
     document.body.appendChild(menu);
     ui.contextMenu = menu;
 
-    document.addEventListener("click", (evt) => {
-      if (ui.contextMenu && ui.contextMenu.style.display !== "none" && !ui.contextMenu.contains(evt.target)) {
-        hideContextMenu();
+    // Fix: prevent clicks/drags/wheel on the menu/scrollbar from closing it.
+    wireContextMenuEventGuards(menu);
+
+    // Close only when click happens outside menu
+    document.addEventListener("pointerdown", (evt) => {
+      if (!ui.contextMenu || ui.contextMenu.style.display === "none") return;
+      if (eventPathIncludes(evt, ui.contextMenu)) return;
+      hideContextMenu();
+    }, { capture: true });
+
+    // Prevent browser context menu if user right-clicks inside the menu
+    document.addEventListener("contextmenu", (evt) => {
+      if (ui.contextMenu && eventPathIncludes(evt, ui.contextMenu)) {
+        evt.preventDefault();
       }
     });
 
-    document.addEventListener("contextmenu", (evt) => {
-      if (ui.contextMenu && ui.contextMenu.contains(evt.target)) evt.preventDefault();
+    window.addEventListener("resize", hideContextMenu);
+    // Keep previous behavior: scrolling outer page hides the menu
+    window.addEventListener("scroll", hideContextMenu, true);
+  }
+
+  function wireContextMenuEventGuards(menu){
+    const stop = (evt) => {
+      // Do NOT preventDefault for wheel or scroll; we want native scrolling.
+      evt.stopPropagation();
+    };
+
+    // These events commonly fire when clicking/dragging the scrollbar.
+    ["pointerdown","pointerup","mousedown","mouseup","click","dblclick","touchstart","touchend"].forEach((t) => {
+      menu.addEventListener(t, stop, { capture: true });
     });
 
-    window.addEventListener("resize", hideContextMenu);
-    window.addEventListener("scroll", hideContextMenu, true);
+    // Allow wheel to scroll; just stop propagation so outside listeners don't react.
+    menu.addEventListener("wheel", (evt) => {
+      evt.stopPropagation();
+    }, { capture: true, passive: true });
+
+    // On right-click inside menu, don't bubble.
+    menu.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+    }, { capture: true });
+  }
+
+  function eventPathIncludes(evt, element){
+    if (!element) return false;
+    const path = (typeof evt.composedPath === "function") ? evt.composedPath() : null;
+    if (path && Array.isArray(path)) return path.includes(element);
+    // fallback
+    return element.contains(evt.target);
   }
 
   // -------- cytoscape init --------
@@ -332,7 +404,7 @@
     currentOntology = item;
     currentStats = null;
     graphIndex = emptyGraphIndex();
-    focusSelection = null; // reset focus on load
+    focusSelection = null;
     hideContextMenu();
 
     try{
@@ -407,7 +479,6 @@
 
     const index = emptyGraphIndex();
 
-    // First pass: labels/comments/types and domain/range
     for (const q of quads){
       const s = q.subject, p = q.predicate, o = q.object;
 
@@ -432,7 +503,6 @@
       }
     }
 
-    // Ensure classes that appear in subclass axioms are included
     for (const q of quads){
       if (q.predicate.termType === "NamedNode" && q.predicate.value === subClassOf.value){
         if (q.subject.termType === "NamedNode") classes.add(q.subject.value);
@@ -440,7 +510,6 @@
       }
     }
 
-    // Individuals: any NamedNode with rdf:type some class in our class set
     const individualsByClass = new Map();
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== rdfType.value) continue;
@@ -461,7 +530,6 @@
     const nodeIds = new Set();
     const edgeIds = new Set(); // to avoid dupes
 
-    // class nodes
     for (const iri of classes){
       const id = iriToId(iri);
       nodeIds.add(id);
@@ -478,7 +546,7 @@
       });
     }
 
-    // object property edges (domain -> range) only when named and both are classes
+    // object property edges
     let objEdgeCount = 0;
     for (const propIri of objectProps){
       const domainTerms = domains.get(propIri) || [];
@@ -600,7 +668,7 @@
       }
     }
 
-    // subclass edges (direct asserted), for named superclass objects only
+    // direct asserted subclass edges (named -> named)
     let subclassCount = 0;
     for (const q of quads){
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
@@ -643,7 +711,7 @@
       subclassCount++;
     }
 
-    // OWL subclass restrictions: rdfs:subClassOf _:bnode where _:bnode is a Restriction
+    // OWL subclass restrictions edges: rdfs:subClassOf _:bnode restriction
     let restrictionEdgeCount = 0;
 
     // Gather candidate restrictions from subclass bnodes
@@ -652,42 +720,33 @@
       if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
       if (q.subject.termType !== "NamedNode") continue;
       if (q.object.termType !== "BlankNode") continue;
-
       restrictionCandidates.push({ classIri: q.subject.value, bnode: q.object });
     }
 
     for (const { classIri, bnode } of restrictionCandidates){
       if (!classes.has(classIri)) continue;
 
-      const bn = bnode; // term
-      const onProps = store.getObjects(bn, owlOnProperty, null) || [];
-      if (!onProps.length) continue;
+      const onProps = store.getObjects(bnode, owlOnProperty, null) || [];
       const onProp = onProps.find(t => t.termType === "NamedNode");
       if (!onProp) continue;
 
-      const some = store.getObjects(bn, owlSomeValuesFrom, null) || [];
-      const all = store.getObjects(bn, owlAllValuesFrom, null) || [];
-      const hv  = store.getObjects(bn, owlHasValue, null) || [];
+      const some = store.getObjects(bnode, owlSomeValuesFrom, null) || [];
+      const all = store.getObjects(bnode, owlAllValuesFrom, null) || [];
+      const hv  = store.getObjects(bnode, owlHasValue, null) || [];
 
-      // Determine if it's a restriction:
-      const isTypedRestriction = store.countQuads(bn, rdfType, owlRestriction, null) > 0;
+      const isTypedRestriction = store.countQuads(bnode, rdfType, owlRestriction, null) > 0;
       const hasPattern = !!(some.length || all.length || hv.length);
       if (!isTypedRestriction && !hasPattern) continue;
 
-      // Choose quantifier + filler (prefer some, then all, then hasValue)
       let quantifier = null;
       let filler = null;
-
       if (some.length) { quantifier = "some"; filler = some[0]; }
       else if (all.length) { quantifier = "only"; filler = all[0]; }
       else if (hv.length) { quantifier = "value"; filler = hv[0]; }
-
       if (!quantifier || !filler) continue;
 
-      // Only draw edges to named class fillers that already exist as classes
-      // (conservative: doesn't create unknown nodes)
+      // Conservative: only edges to named class nodes already in classes set
       if (filler.termType !== "NamedNode") continue;
-
       const targetIri = filler.value;
       if (!classes.has(targetIri)) continue;
 
@@ -696,6 +755,7 @@
       const targetLabel = labels.get(targetIri) || compactIri(targetIri);
 
       const edgeLabel = `${propLabel} ${quantifier}`;
+
       const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(targetIri)}`;
       const eid = dedupeEdgeId(eidBase, edgeIds);
 
@@ -709,7 +769,7 @@
           label: edgeLabel,
           quantifier,
           comment: comments.get(propIri) || "",
-          color: "rgba(255,157,122,.85)"
+          color: RESTRICTION_EDGE_COLOR
         },
         classes: "rel-restriction"
       });
@@ -735,7 +795,7 @@
       restrictionEdgeCount++;
     }
 
-    // individuals as context-only nodes/edges (only shown when navigated via context menu)
+    // individuals as context-only nodes/edges
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
 
@@ -994,9 +1054,7 @@
     };
 
     applyVisibility();
-    if (targetNodeId || sourceNodeId) {
-      navigateToNode(targetNodeId || sourceNodeId, edgeId);
-    }
+    if (targetNodeId || sourceNodeId) navigateToNode(targetNodeId || sourceNodeId, edgeId);
     cy.fit(visibleElements(), 35);
   }
 
@@ -1113,7 +1171,6 @@
         ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({
           _kind: "in",
           ...it,
-          // For incoming: show source + property + quantifier
           menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}`
         }))
       ],
@@ -1121,7 +1178,6 @@
         if (item._kind === "out") {
           contextNavigate(node.id(), iriToId(item.targetIri), item.edgeId, `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`);
         } else {
-          // incoming: navigate to source class
           contextNavigate(node.id(), iriToId(item.sourceIri), item.edgeId, `${label} + incoming restriction ${item.sourceLabel}`);
         }
       },
@@ -1311,7 +1367,6 @@
     }
 
     node.removeClass("contextOnly hidden filterHidden focusHidden");
-
     applyVisibility();
 
     cy.elements().removeClass("selected");
