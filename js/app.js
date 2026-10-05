@@ -538,6 +538,11 @@ function wireContextMenuEventGuards(menu){
     const owlAllValuesFrom = named(OWL + "allValuesFrom");
     const owlHasValue = named(OWL + "hasValue");
 
+    const owlQualifiedCardinality = named(OWL + "qualifiedCardinality");
+    const owlMinQualifiedCardinality = named(OWL + "minQualifiedCardinality");
+    const owlMaxQualifiedCardinality = named(OWL + "maxQualifiedCardinality");
+    const owlOnClass = named(OWL + "onClass");
+
     const labels = new Map();
     const comments = new Map();
 
@@ -773,19 +778,51 @@ function wireContextMenuEventGuards(menu){
       if (!onProp) continue;
 
       const some = store.getObjects(bnode, owlSomeValuesFrom, null) || [];
-      const all = store.getObjects(bnode, owlAllValuesFrom, null) || [];
-      const hv  = store.getObjects(bnode, owlHasValue, null) || [];
+const all = store.getObjects(bnode, owlAllValuesFrom, null) || [];
+const hv = store.getObjects(bnode, owlHasValue, null) || [];
 
-      const isTypedRestriction = store.countQuads(bnode, rdfType, owlRestriction, null) > 0;
-      const hasPattern = !!(some.length || all.length || hv.length);
-      if (!isTypedRestriction && !hasPattern) continue;
+const qualifiedCardinality = store.getObjects(bnode, owlQualifiedCardinality, null) || [];
+const minQualifiedCardinality = store.getObjects(bnode, owlMinQualifiedCardinality, null) || [];
+const maxQualifiedCardinality = store.getObjects(bnode, owlMaxQualifiedCardinality, null) || [];
+const onClass = store.getObjects(bnode, owlOnClass, null) || [];
 
-      let quantifier = null;
-      let filler = null;
-      if (some.length) { quantifier = "some"; filler = some[0]; }
-      else if (all.length) { quantifier = "only"; filler = all[0]; }
-      else if (hv.length) { quantifier = "value"; filler = hv[0]; }
-      if (!quantifier || !filler) continue;
+const isTypedRestriction = store.countQuads(bnode, rdfType, owlRestriction, null) > 0;
+
+const hasPattern = !!(
+  some.length ||
+  all.length ||
+  hv.length ||
+  qualifiedCardinality.length ||
+  minQualifiedCardinality.length ||
+  maxQualifiedCardinality.length
+);
+
+if (!isTypedRestriction && !hasPattern) continue;
+
+let quantifier = null;
+let filler = null;
+
+if (some.length) {
+  quantifier = "some";
+  filler = some[0];
+} else if (all.length) {
+  quantifier = "only";
+  filler = all[0];
+} else if (hv.length) {
+  quantifier = "value";
+  filler = hv[0];
+} else if (qualifiedCardinality.length && onClass.length) {
+  quantifier = `exactly ${qualifiedCardinality[0].value}`;
+  filler = onClass[0];
+} else if (minQualifiedCardinality.length && onClass.length) {
+  quantifier = `min ${minQualifiedCardinality[0].value}`;
+  filler = onClass[0];
+} else if (maxQualifiedCardinality.length && onClass.length) {
+  quantifier = `max ${maxQualifiedCardinality[0].value}`;
+  filler = onClass[0];
+}
+
+if (!quantifier || !filler) continue;
 
       if (filler.termType !== "NamedNode") continue;
       const targetIri = filler.value;
