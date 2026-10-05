@@ -823,40 +823,99 @@ if (some.length) {
 }
 
 if (!quantifier || !filler) continue;
+if (filler.termType !== "NamedNode") continue;
 
-      if (filler.termType !== "NamedNode") continue;
-      const targetIri = filler.value;
-      if (!classes.has(targetIri)) continue;
+const propIri = onProp.value;
+const propLabel = labels.get(propIri) || compactIri(propIri);
 
-      const propIri = onProp.value;
-      const propLabel = labels.get(propIri) || compactIri(propIri);
-      const targetLabel = labels.get(targetIri) || compactIri(targetIri);
+const isDataPropertyRestriction = dataProps.has(propIri);
 
-      const edgeLabel = `${propLabel} ${quantifier}`;
-      const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(targetIri)}`;
-      const eid = dedupeEdgeId(eidBase, edgeIds);
+let targetNodeId = null;
+let targetIri = null;
+let targetLabel = null;
+let edgeLabel = null;
+let edgeClasses = "rel-restriction";
 
-      elements.push({
-        data: {
-          id: eid,
-          source: iriToId(classIri),
-          target: iriToId(targetIri),
-          iri: propIri,
-          type: "restrictionEdge",
-          label: edgeLabel,
-          quantifier,
-          comment: comments.get(propIri) || "",
-          color: RESTRICTION_EDGE_COLOR
-        },
-        classes: "rel-restriction"
-      });
+if (isDataPropertyRestriction) {
+  const datatypeLabel = termToReadable(filler);
 
-      addToMapArray(index.restrictionOutByClass, classIri, { propIri, label: propLabel, quantifier, targetIri, targetLabel, edgeId: eid });
-      addToMapArray(index.restrictionInByClass, targetIri, { propIri, label: propLabel, quantifier, sourceIri: classIri, sourceLabel: labels.get(classIri) || compactIri(classIri), edgeId: eid });
+  targetIri = propIri;
+  targetLabel = propLabel;
+  targetNodeId = `dp:${iriToId(propIri)}`;
 
-      restrictionEdgeCount++;
-    }
+  if (!nodeIds.has(targetNodeId)) {
+    nodeIds.add(targetNodeId);
 
+    elements.push({
+      data: {
+        id: targetNodeId,
+        iri: propIri,
+        type: "dataprop",
+        label: `${propLabel}\n: ${datatypeLabel}`,
+        labelFull: `${propLabel}\n: ${datatypeLabel}`,
+        range: datatypeLabel,
+        comment: comments.get(propIri) || "",
+        color: "rgba(70,135,65,.90)",
+        size: 16
+      }
+    });
+
+    dataNodeCount++;
+  }
+
+  edgeLabel = `${propLabel} ${quantifier} ${datatypeLabel}`;
+  edgeClasses = "rel-restriction rel-dataprop";
+} else {
+  targetIri = filler.value;
+
+  if (!classes.has(targetIri)) continue;
+
+  targetLabel = labels.get(targetIri) || compactIri(targetIri);
+  targetNodeId = iriToId(targetIri);
+  edgeLabel = `${propLabel} ${quantifier}`;
+}
+
+const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(filler.value)}`;
+const eid = dedupeEdgeId(eidBase, edgeIds);
+
+elements.push({
+  data: {
+    id: eid,
+    source: iriToId(classIri),
+    target: targetNodeId,
+    iri: propIri,
+    type: "restrictionEdge",
+    label: edgeLabel,
+    quantifier,
+    comment: comments.get(propIri) || "",
+    color: RESTRICTION_EDGE_COLOR
+  },
+  classes: edgeClasses
+});
+
+addToMapArray(index.restrictionOutByClass, classIri, {
+  propIri,
+  label: propLabel,
+  quantifier,
+  targetIri,
+  targetLabel,
+  targetNodeId,
+  edgeId: eid
+});
+
+if (!isDataPropertyRestriction) {
+  addToMapArray(index.restrictionInByClass, targetIri, {
+    propIri,
+    label: propLabel,
+    quantifier,
+    sourceIri: classIri,
+    sourceLabel: labels.get(classIri) || compactIri(classIri),
+    edgeId: eid
+  });
+}
+
+restrictionEdgeCount++;
+      
     // individuals (context only)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
@@ -1192,18 +1251,40 @@ if (!quantifier || !filler) continue;
       (item) => item.classLabel
     );
 
-    appendClassMenuGroup(
-      menu, "Restrictions",
-      [
-        ...(graphIndex.restrictionOutByClass.get(iri) || []).map((it) => ({ _kind: "out", ...it, menuLabel: `${it.label} ${it.quantifier} ${it.targetLabel}` })),
-        ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({ _kind: "in", ...it, menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}` }))
-      ],
-      (item) => {
-        if (item._kind === "out") contextNavigate(node.id(), iriToId(item.targetIri), item.edgeId, `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`);
-        else contextNavigate(node.id(), iriToId(item.sourceIri), item.edgeId, `${label} + incoming restriction ${item.sourceLabel}`);
-      },
-      (item) => item.menuLabel
-    );
+appendClassMenuGroup(
+  menu, "Restrictions",
+  [
+    ...(graphIndex.restrictionOutByClass.get(iri) || []).map((it) => ({
+      _kind: "out",
+      ...it,
+      menuLabel: `${it.label} ${it.quantifier} ${it.targetLabel}`
+    })),
+    ...(graphIndex.restrictionInByClass.get(iri) || []).map((it) => ({
+      _kind: "in",
+      ...it,
+      menuLabel: `${it.sourceLabel} — ${it.label} ${it.quantifier}`
+    }))
+  ],
+  (item) => {
+    if (item._kind === "out") {
+      const targetNodeId = item.targetNodeId || iriToId(item.targetIri);
+      contextNavigate(
+        node.id(),
+        targetNodeId,
+        item.edgeId,
+        `${label} + restriction ${item.label} ${item.quantifier} ${item.targetLabel}`
+      );
+    } else {
+      contextNavigate(
+        node.id(),
+        iriToId(item.sourceIri),
+        item.edgeId,
+        `${label} + incoming restriction ${item.sourceLabel}`
+      );
+    }
+  },
+  (item) => item.menuLabel
+);
 
     appendClassMenuGroup(
       menu, "Data properties", graphIndex.dataPropsByClass.get(iri) || [],
