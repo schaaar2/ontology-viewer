@@ -840,8 +840,8 @@ if (isDataPropertyRestriction) {
   const datatypeLabel = termToReadable(filler);
 
   targetIri = propIri;
-  targetLabel = propLabel;
-  targetNodeId = `dp:${iriToId(propIri)}`;
+targetLabel = datatypeLabel;
+targetNodeId = `dp:${iriToId(propIri)}`;
 
   if (!nodeIds.has(targetNodeId)) {
     nodeIds.add(targetNodeId);
@@ -893,6 +893,16 @@ elements.push({
   classes: edgeClasses
 });
 
+if (isDataPropertyRestriction) {
+  addToMapArray(index.dataPropsByClass, classIri, {
+    propIri,
+    label: propLabel,
+    nodeId: targetNodeId,
+    range: termToReadable(filler),
+    edgeId: eid
+  });
+}
+
 addToMapArray(index.restrictionOutByClass, classIri, {
   propIri,
   label: propLabel,
@@ -915,11 +925,12 @@ if (!isDataPropertyRestriction) {
 }
 
 restrictionEdgeCount++;
-      
+    }
+
     // individuals (context only)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
-
+      
     for (const [classIri, individualIris] of individualsByClass.entries()){
       for (const individualIri of individualIris){
         const nodeId = `ind:${iriToId(individualIri)}`;
