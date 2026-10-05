@@ -539,9 +539,10 @@ function wireContextMenuEventGuards(menu){
     const owlHasValue = named(OWL + "hasValue");
 
     const owlQualifiedCardinality = named(OWL + "qualifiedCardinality");
-    const owlMinQualifiedCardinality = named(OWL + "minQualifiedCardinality");
-    const owlMaxQualifiedCardinality = named(OWL + "maxQualifiedCardinality");
-    const owlOnClass = named(OWL + "onClass");
+const owlMinQualifiedCardinality = named(OWL + "minQualifiedCardinality");
+const owlMaxQualifiedCardinality = named(OWL + "maxQualifiedCardinality");
+const owlOnClass = named(OWL + "onClass");
+const owlOnDataRange = named(OWL + "onDataRange");
 
     const labels = new Map();
     const comments = new Map();
@@ -761,172 +762,180 @@ function wireContextMenuEventGuards(menu){
     }
 
     // restriction edges
-    let restrictionEdgeCount = 0;
-    const restrictionCandidates = [];
-    for (const q of quads){
-      if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
-      if (q.subject.termType !== "NamedNode") continue;
-      if (q.object.termType !== "BlankNode") continue;
-      restrictionCandidates.push({ classIri: q.subject.value, bnode: q.object });
-    }
+let restrictionEdgeCount = 0;
+const restrictionCandidates = [];
 
-    for (const { classIri, bnode } of restrictionCandidates){
-      if (!classes.has(classIri)) continue;
+for (const q of quads) {
+  if (q.predicate.termType !== "NamedNode" || q.predicate.value !== subClassOf.value) continue;
+  if (q.subject.termType !== "NamedNode") continue;
+  if (q.object.termType !== "BlankNode") continue;
 
-      const onProps = store.getObjects(bnode, owlOnProperty, null) || [];
-      const onProp = onProps.find(t => t.termType === "NamedNode");
-      if (!onProp) continue;
-
-      const some = store.getObjects(bnode, owlSomeValuesFrom, null) || [];
-const all = store.getObjects(bnode, owlAllValuesFrom, null) || [];
-const hv = store.getObjects(bnode, owlHasValue, null) || [];
-
-const qualifiedCardinality = store.getObjects(bnode, owlQualifiedCardinality, null) || [];
-const minQualifiedCardinality = store.getObjects(bnode, owlMinQualifiedCardinality, null) || [];
-const maxQualifiedCardinality = store.getObjects(bnode, owlMaxQualifiedCardinality, null) || [];
-const onClass = store.getObjects(bnode, owlOnClass, null) || [];
-
-const isTypedRestriction = store.countQuads(bnode, rdfType, owlRestriction, null) > 0;
-
-const hasPattern = !!(
-  some.length ||
-  all.length ||
-  hv.length ||
-  qualifiedCardinality.length ||
-  minQualifiedCardinality.length ||
-  maxQualifiedCardinality.length
-);
-
-if (!isTypedRestriction && !hasPattern) continue;
-
-let quantifier = null;
-let filler = null;
-
-if (some.length) {
-  quantifier = "some";
-  filler = some[0];
-} else if (all.length) {
-  quantifier = "only";
-  filler = all[0];
-} else if (hv.length) {
-  quantifier = "value";
-  filler = hv[0];
-} else if (qualifiedCardinality.length && onClass.length) {
-  quantifier = `exactly ${qualifiedCardinality[0].value}`;
-  filler = onClass[0];
-} else if (minQualifiedCardinality.length && onClass.length) {
-  quantifier = `min ${minQualifiedCardinality[0].value}`;
-  filler = onClass[0];
-} else if (maxQualifiedCardinality.length && onClass.length) {
-  quantifier = `max ${maxQualifiedCardinality[0].value}`;
-  filler = onClass[0];
+  restrictionCandidates.push({
+    classIri: q.subject.value,
+    bnode: q.object
+  });
 }
 
-if (!quantifier || !filler) continue;
-if (filler.termType !== "NamedNode") continue;
+for (const { classIri, bnode } of restrictionCandidates) {
+  if (!classes.has(classIri)) continue;
 
-const propIri = onProp.value;
-const propLabel = labels.get(propIri) || compactIri(propIri);
+  const onProps = store.getObjects(bnode, owlOnProperty, null) || [];
+  const onProp = onProps.find((t) => t.termType === "NamedNode");
+  if (!onProp) continue;
 
-const isDataPropertyRestriction = dataProps.has(propIri);
+  const some = store.getObjects(bnode, owlSomeValuesFrom, null) || [];
+  const all = store.getObjects(bnode, owlAllValuesFrom, null) || [];
+  const hv = store.getObjects(bnode, owlHasValue, null) || [];
 
-let targetNodeId = null;
-let targetIri = null;
-let targetLabel = null;
-let edgeLabel = null;
-let edgeClasses = "rel-restriction";
+  const qualifiedCardinality = store.getObjects(bnode, owlQualifiedCardinality, null) || [];
+  const minQualifiedCardinality = store.getObjects(bnode, owlMinQualifiedCardinality, null) || [];
+  const maxQualifiedCardinality = store.getObjects(bnode, owlMaxQualifiedCardinality, null) || [];
 
-if (isDataPropertyRestriction) {
-  const datatypeLabel = termToReadable(filler);
+  const onClass = store.getObjects(bnode, owlOnClass, null) || [];
+  const onDataRange = store.getObjects(bnode, owlOnDataRange, null) || [];
 
-  targetIri = propIri;
-targetLabel = datatypeLabel;
-targetNodeId = `dp:${iriToId(propIri)}`;
+  const isTypedRestriction = store.countQuads(bnode, rdfType, owlRestriction, null) > 0;
 
-  if (!nodeIds.has(targetNodeId)) {
-    nodeIds.add(targetNodeId);
+  const hasPattern = Boolean(
+    some.length ||
+    all.length ||
+    hv.length ||
+    qualifiedCardinality.length ||
+    minQualifiedCardinality.length ||
+    maxQualifiedCardinality.length
+  );
 
-    elements.push({
-      data: {
-        id: targetNodeId,
-        iri: propIri,
-        type: "dataprop",
-        label: `${propLabel}\n: ${datatypeLabel}`,
-        labelFull: `${propLabel}\n: ${datatypeLabel}`,
-        range: datatypeLabel,
-        comment: comments.get(propIri) || "",
-        color: "rgba(70,135,65,.90)",
-        size: 16
-      }
-    });
+  if (!isTypedRestriction && !hasPattern) continue;
 
-    dataNodeCount++;
+  let quantifier = null;
+  let filler = null;
+
+  if (some.length) {
+    quantifier = "some";
+    filler = some[0];
+  } else if (all.length) {
+    quantifier = "only";
+    filler = all[0];
+  } else if (hv.length) {
+    quantifier = "value";
+    filler = hv[0];
+  } else if (qualifiedCardinality.length && (onClass.length || onDataRange.length)) {
+    quantifier = `exactly ${qualifiedCardinality[0].value}`;
+    filler = onClass[0] || onDataRange[0];
+  } else if (minQualifiedCardinality.length && (onClass.length || onDataRange.length)) {
+    quantifier = `min ${minQualifiedCardinality[0].value}`;
+    filler = onClass[0] || onDataRange[0];
+  } else if (maxQualifiedCardinality.length && (onClass.length || onDataRange.length)) {
+    quantifier = `max ${maxQualifiedCardinality[0].value}`;
+    filler = onClass[0] || onDataRange[0];
   }
 
-  edgeLabel = `${propLabel} ${quantifier} ${datatypeLabel}`;
-  edgeClasses = "rel-restriction rel-dataprop";
-} else {
-  targetIri = filler.value;
+  if (!quantifier || !filler) continue;
+  if (filler.termType !== "NamedNode") continue;
 
-  if (!classes.has(targetIri)) continue;
+  const propIri = onProp.value;
+  const propLabel = labels.get(propIri) || compactIri(propIri);
 
-  targetLabel = labels.get(targetIri) || compactIri(targetIri);
-  targetNodeId = iriToId(targetIri);
-  edgeLabel = `${propLabel} ${quantifier}`;
-}
+  const fillerIri = filler.value;
+  const fillerLabel = termToReadable(filler);
 
-const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(filler.value)}`;
-const eid = dedupeEdgeId(eidBase, edgeIds);
+  const isDataPropertyRestriction =
+    dataProps.has(propIri) ||
+    isDatatypeIri(fillerIri);
 
-elements.push({
-  data: {
-    id: eid,
-    source: iriToId(classIri),
-    target: targetNodeId,
-    iri: propIri,
-    type: "restrictionEdge",
-    label: edgeLabel,
-    quantifier,
-    comment: comments.get(propIri) || "",
-    color: RESTRICTION_EDGE_COLOR
-  },
-  classes: edgeClasses
-});
+  let targetNodeId = null;
+  let targetIri = null;
+  let targetLabel = null;
+  let edgeLabel = null;
+  let edgeClasses = "rel-restriction";
 
-if (isDataPropertyRestriction) {
-  addToMapArray(index.dataPropsByClass, classIri, {
-    propIri,
-    label: propLabel,
-    nodeId: targetNodeId,
-    range: termToReadable(filler),
-    edgeId: eid
-  });
-}
+  if (isDataPropertyRestriction) {
+    targetIri = propIri;
+    targetLabel = fillerLabel;
+    targetNodeId = `dp:${iriToId(propIri)}`;
 
-addToMapArray(index.restrictionOutByClass, classIri, {
-  propIri,
-  label: propLabel,
-  quantifier,
-  targetIri,
-  targetLabel,
-  targetNodeId,
-  edgeId: eid
-});
+    if (!nodeIds.has(targetNodeId)) {
+      nodeIds.add(targetNodeId);
 
-if (!isDataPropertyRestriction) {
-  addToMapArray(index.restrictionInByClass, targetIri, {
-    propIri,
-    label: propLabel,
-    quantifier,
-    sourceIri: classIri,
-    sourceLabel: labels.get(classIri) || compactIri(classIri),
-    edgeId: eid
-  });
-}
+      elements.push({
+        data: {
+          id: targetNodeId,
+          iri: propIri,
+          type: "dataprop",
+          label: `${propLabel}\n: ${fillerLabel}`,
+          labelFull: `${propLabel}\n: ${fillerLabel}`,
+          range: fillerLabel,
+          comment: comments.get(propIri) || "",
+          color: "rgba(70,135,65,.90)",
+          size: 16
+        }
+      });
 
-restrictionEdgeCount++;
+      dataNodeCount++;
     }
 
+    edgeLabel = `${propLabel} ${quantifier} ${fillerLabel}`;
+    edgeClasses = "rel-restriction rel-dataprop";
+  } else {
+    targetIri = fillerIri;
+
+    if (!classes.has(targetIri)) continue;
+
+    targetLabel = labels.get(targetIri) || compactIri(targetIri);
+    targetNodeId = iriToId(targetIri);
+    edgeLabel = `${propLabel} ${quantifier}`;
+  }
+
+  const eidBase = `res:${iriToId(classIri)}:${iriToId(propIri)}:${quantifier}:${iriToId(fillerIri)}`;
+  const eid = dedupeEdgeId(eidBase, edgeIds);
+
+  elements.push({
+    data: {
+      id: eid,
+      source: iriToId(classIri),
+      target: targetNodeId,
+      iri: propIri,
+      type: "restrictionEdge",
+      label: edgeLabel,
+      quantifier,
+      comment: comments.get(propIri) || "",
+      color: RESTRICTION_EDGE_COLOR
+    },
+    classes: edgeClasses
+  });
+
+  addToMapArray(index.restrictionOutByClass, classIri, {
+    propIri,
+    label: propLabel,
+    quantifier,
+    targetIri,
+    targetLabel,
+    targetNodeId,
+    edgeId: eid
+  });
+
+  if (isDataPropertyRestriction) {
+    addToMapArray(index.dataPropsByClass, classIri, {
+      propIri,
+      label: propLabel,
+      nodeId: targetNodeId,
+      range: fillerLabel,
+      edgeId: eid
+    });
+  } else {
+    addToMapArray(index.restrictionInByClass, targetIri, {
+      propIri,
+      label: propLabel,
+      quantifier,
+      sourceIri: classIri,
+      sourceLabel: labels.get(classIri) || compactIri(classIri),
+      edgeId: eid
+    });
+  }
+
+  restrictionEdgeCount++;
+}
+    
     // individuals (context only)
     let individualNodeCount = 0;
     let individualEdgeCount = 0;
@@ -1665,6 +1674,17 @@ appendClassMenuGroup(
     if (term.termType === "Literal") return term.value;
     return String(term.value || "");
   }
+
+  function isDatatypeIri(iri) {
+  return (
+    typeof iri === "string" &&
+    (
+      iri.startsWith(XSD) ||
+      iri === RDFS + "Literal"
+    )
+  );
+}
+  
 
   function escapeHtml(s){
     return String(s)
